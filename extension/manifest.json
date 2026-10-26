@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Jiji MCP Browser Bridge",
+  "version": "0.1.0",
+  "description": "Use your Jiji browser session with your MCP agents. No cookie export.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs1B/+Bh67zE4u6kCiwoxvA6hbK1DiyKA2SG2oL9WAcEZf+MakrLowCb+DyzwqvBwtSPhfnF/izusU5yIypR8eF3kP4wcBu9SaI9PnLoDGylpnYgM9VQ2HBZnyY3gzSK1/dl9Ws4lfqZHkaY+GEHqACdiitil/DXcZ85yrXKFWEJjEBMgB4dTwUu/JxlfW6Z0IXukkZD0nrMUx63/4D6b3eMr9bBwXQoduZgFWO0/+y4qSfiYvMxZg1UoJbnJwjj32P/cJqk9Pt/3C3ltE9csOkqmINVPkbjVA/g7e8efTOUTupameJtL9wZMmCQ2RkQwLQGBzcpm/bQXxFxEB622ywIDAQAB",
+  "permissions": ["nativeMessaging", "scripting", "storage"],
+  "host_permissions": ["https://jiji.ng/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Jiji MCP"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+work/
+*.log
+.DS_Store
+scripts/native-host.sh
+wrangler.local.jsonc
+.wrangler/

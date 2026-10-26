@@ -1,0 +1,13 @@
+{
+  "name": "jiji-browser-mcp",
+  "main": "cloud/worker.mjs",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID" },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "BRIDGES", "class_name": "JijiBridge" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["JijiBridge"] }],
+}

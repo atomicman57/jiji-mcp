@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width"
+  /><title>Jiji MCP</title
+  ><link rel="stylesheet" href="popup.css" />
+  <body>
+    <span class="eyebrow">YOUR BROWSER · YOUR SESSION</span>
+    <h1>Jiji for your agents</h1>
+    <p>Search and inspect listings using Jiji in Chrome.</p>
+    <section aria-live="polite">
+      <strong id="label">Checking bridge…</strong>
+      <p id="status">Loading connection status.</p>
+    </section>
+    <button id="connect">Connect bridge</button
+    ><button id="login" class="secondary">Open Jiji sign-in</button>
+    <details>
+      <summary>Connect a cloud agent</summary>
+      <label for="server">MCP server origin</label
+      ><input
+        id="server"
+        type="url"
+        placeholder="https://your-server.workers.dev"
+      /><button id="save" class="secondary">Use this server</button
+      ><button id="pair" class="secondary">Pair an agent</button>
+      <p id="cloud" aria-live="polite"></p>
+      <output id="code" aria-label="One-time pairing code"></output
+      ><small
+        >Enter this code only on your MCP server’s connection page. It expires
+        in 10 minutes and connects one agent.</small
+      >
+    </details>
+    <button id="disconnect" class="secondary">Disconnect</button
+    ><small
+      >Sign in only on jiji.ng. This bridge never reads or exports cookies,
+      passwords, or verification codes. No seller messages or payments.</small
+    >
+    <script src="popup.js"></script>
+  </body>
+</html>
