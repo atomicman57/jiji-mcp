@@ -30,7 +30,7 @@ test("browser bridge keeps requests on Jiji and strips account/contact fields", 
       onStartup: event(),
       onInstalled: event(),
     },
-    storage: { local: { get: async () => ({}) } },
+    storage: { local: { get: async () => ({}), set: async () => {} } },
     tabs: {
       query: async () => [{ id: 1, active: true }],
       create: async () => {},

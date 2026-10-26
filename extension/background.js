@@ -15,6 +15,7 @@ let chain = Promise.resolve();
 let lastRequest = 0;
 function connect() {
   if (port) return;
+  void chrome.storage.local.set({ enabled: true });
   state = { connected: false, message: "Connecting…" };
   port = chrome.runtime.connectNative("com.jiji_mcp.bridge");
   port.onMessage.addListener((m) => {
@@ -288,6 +289,7 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
       pairingCode = (await remote("/bridge/pair")).code;
     }
     if (m.action === "disconnect") {
+      await chrome.storage.local.set({ enabled: false });
       generation++;
       cloudAbort?.abort();
       polling = false;
@@ -305,5 +307,9 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
   })().catch((e) => respond({ ...state, error: e.message }));
   return true;
 });
-chrome.runtime.onStartup.addListener(connect);
-chrome.runtime.onInstalled.addListener(connect);
+async function restoreConnection() {
+  const { enabled } = await chrome.storage.local.get("enabled");
+  if (enabled) connect();
+}
+chrome.runtime.onStartup.addListener(restoreConnection);
+chrome.runtime.onInstalled.addListener(restoreConnection);
