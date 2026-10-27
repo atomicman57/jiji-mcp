@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import http from "node:http";
+import { runCloudSession } from "./cloud-socket.mjs";
 import net from "node:net";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -50,6 +51,7 @@ async function action(m) {
       connected: enabled,
       companion_url: origin,
       cloud_connected: cloudConnected,
+      cloud_transport: "hibernating-websocket",
     };
   if (m.action === "login") return browser.run(() => browser.login());
   if (!enabled)
@@ -144,28 +146,22 @@ async function startCloud() {
     let failures = 0;
     while (!signal.aborted && enabled) {
       try {
-        const { jobs } = await remote("/bridge/poll", {}, signal);
-        cloudConnected = true;
-        cloudError = "";
-        failures = 0;
-        for (const job of jobs || []) {
-          if (signal.aborted) break;
-          let result;
-          try {
-            result = await action(job.request || job);
-          } catch (e) {
-            result = { error: e.message };
-          }
-          if (!signal.aborted) {
-            // Transport correlation IDs are distinct from approval-plan IDs.
-            // Never rerun a Jiji operation when its response cannot be delivered.
-            await remote("/bridge/result", { id: job.id, result }, signal);
-          }
-        }
+        await runCloudSession({
+          origin: config.cloudOrigin,
+          identity,
+          signal,
+          action,
+          onConnected: () => {
+            cloudConnected = true;
+            cloudError = "";
+            failures = 0;
+          },
+        });
       } catch (e) {
         if (signal.aborted) break;
         cloudConnected = false;
         cloudError = e.message;
+        if (e.code === "COMPANION_REPLACED") break;
         const delay = Math.min(30000, 1000 * 2 ** Math.min(failures++, 5));
         await new Promise((resolve) => {
           const done = () => {

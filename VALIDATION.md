@@ -1,10 +1,10 @@
-# Validation — version 0.3.2
+# Validation — version 0.3.3
 
 Verified on 2026-10-27. The platform baseline is `f4b7755`; `f119ec6` adds closed-tab recovery. The latest local companion also removes embedded seller contact fields from account research while preserving owner profile contacts. Version 0.3.1 adds shared native-filter inputs for listing search and market-price samples. Persistent OAuth storage has also migrated from KV to D1; approval boundaries and existing grants are preserved.
 
 ## Automated checks
 
-All **24 tests pass** after the browser lifecycle and contact-redaction fixes. They cover tool discovery, research/pagination, catalog schemas, credential and contact redaction inside the browser, owner profile preservation, advert identity, native-offer target validation, saved-search routing, one-time/concurrent/expired approvals, uncertain outcomes without retry, private socket/CSRF protections, and cloud OAuth/PKCE, isolation and expanded consent. `git diff --check` passes. Cloud build and dependency audit passed for the platform baseline; no dependency or Worker code changed in these local fixes.
+All **28 tests pass** after the browser lifecycle and contact-redaction fixes. They cover tool discovery, research/pagination, catalog schemas, credential and contact redaction inside the browser, owner profile preservation, advert identity, native-offer target validation, saved-search routing, one-time/concurrent/expired approvals, uncertain outcomes without retry, private socket/CSRF protections, and cloud OAuth/PKCE, isolation and expanded consent. `git diff --check` passes. The final cloud build passes. Version 0.3.3 includes the WebSocket relay, stable connection correlation and structured tool output changes described below. The earlier dependency audit applies to the platform baseline, not a new audit of this release.
 
 ## Authenticated live checks
 
@@ -20,12 +20,12 @@ Live saved-advert and chat-room responses now omit embedded seller phone fields.
 
 | Client | Actual verification |
 | --- | --- |
-| Codex | 21 tools and final 73-read/35-action/42-workflow catalog; real search/detail and pending-plan routing; authenticated profile, saved adverts, own adverts and notifications. |
-| ChatGPT | Connected app calls pass live research, catalog/status, expanded-grant account reads, and pending-plan/status checks. Authenticated profile, saved adverts, own adverts, notifications and contact-redaction checks pass. Its web verification chat still displays **“This response couldn’t load”**, including a fresh status-only request. Connector responses work; web response rendering remains unresolved. |
-| Claude | Actual verification chat passes signed-in status and profile, saved adverts, own adverts, notifications and chat lists. A separate fresh check confirms saved-advert/chat-room contact fields are omitted. Earlier research and listing-detail checks passed. |
-| Grokbot | Supported built-in custom connector tool registered Jiji; OAuth pairing completed and the native card shows **Connected · 1 Account**. Its actual Jiji bot discovered 21 tools and passed nine checks: capabilities, signed-in status, search, listing details and five account reads. It confirmed the metadata redaction and that it will use this connector for future Jiji work. |
+| Codex | The active local tool connection now runs the current implementation: signed in, 3 + 12 = 15 unique Used listings through its cursor, and four successful authenticated account reads. Earlier search/details and pending-plan checks also passed. No whole-app restart was needed. |
+| ChatGPT | Fresh web verification visibly passes on GPT-5.6 Sol Medium: signed in, 3 + 12 = 15 unique Used listings, and four successful account reads. This chat was left on that working model. GPT-6 still displayed “This response couldn’t load” after tool calls; a plain-text control worked. Returning structured data alone did not resolve that GPT-6 issue. This is a verified compatibility workaround, not a claim that GPT-6 rendering was repaired. |
+| Claude | Fresh actual chat verifies signed in, 3 + 12 = 15 unique Used listings and four successful private account reads. Earlier chat-list, contact-redaction and listing-detail checks passed. |
+| Grokbot | Personal Jiji bot refreshed all 21 tools and passed signed-in status, 3 + 12 = 15 unique Used listings and four authenticated account reads. It confirmed the earlier missing-cursor problem is fixed and saved continued use of the connector. Earlier details and redaction checks also passed. |
 
-The final hosted deployment `efcb874d-e6e9-415f-81b0-efd2e843952e` passed live OAuth/PKCE, isolation and routing fixtures. An ephemeral in-memory grant bound to the real companion also verified research and pending approval/status routing. Pairing codes and tokens are not recorded here.
+The platform-baseline hosted deployment `efcb874d-e6e9-415f-81b0-efd2e843952e` passed live OAuth/PKCE, isolation and routing fixtures. An ephemeral in-memory grant bound to the real companion also verified research and pending approval/status routing. Pairing codes and tokens are not recorded here.
 
 ## Verification limits
 
@@ -46,3 +46,9 @@ A dedicated D1 persistence test exercises binary/Unicode/JSON data, metadata, ex
 ## Same-page pagination recovery
 
 Version 0.3.2 fixes the real Grokbot finding that a small limit could hide remaining results when Jiji supplied no next-page URL. Cursors now retain the unused normalized results from the current page before following the authoritative server URL. Live verification returned 3 plus 14 results: 17 distinct Used listings, with only one upstream Jiji request. Automated tests cover both final pages and pages followed by another server page, with no omissions, duplicates or extra upstream reads for the buffered remainder.
+
+## WebSocket recovery and tool-result compatibility
+
+The companion now uses an authenticated hibernating WebSocket. Correlation uses a serialized connection ID, rather than JavaScript wrapper identity, so results and close events match restored sockets. Tests exercise different wrappers for the same connection, reject other connections, and send a fresh browser job after forced hibernation. Live status and search also pass after an idle interval. An uncertain operation is never replayed. The old polling routes return HTTP 426. Existing D1 storage, OAuth grants and approval boundaries are preserved.
+
+Successful tool results now retain the original JSON text and also expose the same canonical JSON payload under `structuredContent.data`, with a declared output schema. This is verified for search, pagination and details. The final live hosted OAuth regression passes Used and Brand New filters, same-page cursor completion, account reads and pending-plan/status routing without submission. The ChatGPT display workaround is the model selection documented above; structured output alone was not sufficient.

@@ -109,7 +109,7 @@ Copy `wrangler.jsonc` to `wrangler.local.jsonc`, replace its D1 database ID and 
 npx wrangler deploy --config wrangler.local.jsonc --durable-objects-code-update-mode immediate
 ```
 
-The Worker uses Cloudflare D1 and per-user Durable Objects, plus `@cloudflare/workers-oauth-provider`. Configure `PUBLIC_ORIGIN` for a custom domain. Active companions maintain long polls; hosting usage costs and limits apply to the operator. Never commit credentials, browser profiles or personal deployment configuration.
+The Worker uses Cloudflare D1 and per-user Durable Objects, plus `@cloudflare/workers-oauth-provider`. Configure `PUBLIC_ORIGIN` for a custom domain. Companions use hibernating WebSockets; hosting usage costs and limits apply to the operator. Never commit credentials, browser profiles or personal deployment configuration.
 
 ## Development and tests
 
@@ -122,3 +122,11 @@ npm audit
 Tests cover catalog schemas, credential/payment-field rejection, per-user OAuth routing, expanded-access consent, request/approval ID separation, the local HTTP/Unix-socket boundary, and one-time approval state. Live sign-in and each client connection must be verified separately. The tests never contact a real seller or initiate payment.
 
 See [SECURITY.md](SECURITY.md) for trust boundaries and [FEATURES.md](FEATURES.md) for explicit coverage and gaps.
+
+## Idle cloud transport
+
+The companion uses an authenticated WebSocket to `/bridge/socket`. The relay accepts it through the Durable Object Hibernation API, and native protocol ping/pong keeps the connection healthy without an application heartbeat. Idle polling is retired: `/bridge/poll` returns HTTP 426 so an old companion cannot silently consume continuous runtime. Update the companion and restart its local service when deploying this relay version. Existing OAuth grants and browser sign-in are retained. Reconnect never replays an uncertain operation. Search pagination is saved in the existing Durable Object storage so it survives hibernation. No new cron, KV namespace, database, or paid plan is required.
+
+## ChatGPT compatibility
+
+On 2026-10-27, the web verification chat rendered Jiji tool results correctly with GPT-5.6 Sol Medium. GPT-6 returned successful connector calls but its final response displayed “This response couldn’t load.” If affected, select GPT-5.6 Sol in that Jiji chat and send a fresh request. This is an observed client workaround; it does not establish that every model has the issue. Tool results include both JSON text and a matching `structuredContent.data` payload with an output schema.

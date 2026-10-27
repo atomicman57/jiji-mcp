@@ -1,3 +1,4 @@
+import { socketConnectionId, matchesSocket } from "./socket-identity.mjs";
 import { withD1Storage, cleanupD1Storage } from "./d1-kv.mjs";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -126,11 +127,29 @@ const defaultHandler = {
     const u = new URL(req.url);
     if (u.pathname === "/authorize") return authorize(req, env);
     if (u.pathname.startsWith("/bridge/")) {
-      if (req.method !== "POST") return json({ error: "POST required" }, 405);
+      const socket = u.pathname === "/bridge/socket";
+      if (socket ? req.method !== "GET" : req.method !== "POST")
+        return json({ error: "Method rejected" }, 405);
+      if (
+        socket &&
+        (req.headers.get("Upgrade")?.toLowerCase() !== "websocket" ||
+          req.headers.has("Origin"))
+      )
+        return json({ error: "Native WebSocket upgrade required" }, 403);
       const token = req.headers.get("Authorization")?.replace(/^Bearer /, "");
       if (!/^[a-f0-9]{64}$/.test(token || ""))
         return json({ error: "Browser installation token required" }, 401);
       const user = await hash(token);
+      if (socket) {
+        const headers = new Headers(req.headers);
+        headers.delete("Authorization");
+        return stub(env, user).fetch(
+          new Request("https://bridge.internal/connect", {
+            method: "GET",
+            headers,
+          }),
+        );
+      }
       if (u.pathname === "/bridge/pair") {
         if (!(await limited(req, env)))
           return json({ error: "Too many requests" }, 429);
@@ -143,9 +162,12 @@ const defaultHandler = {
         return json({ code, expires_in: 600 });
       }
       if (
-        !["/bridge/poll", "/bridge/result", "/bridge/disconnect"].includes(
-          u.pathname,
-        )
+        ![
+          "/bridge/poll",
+          "/bridge/result",
+          "/bridge/disconnect",
+          "/bridge/status",
+        ].includes(u.pathname)
       )
         return json({ error: "Not found" }, 404);
       if (Number(req.headers.get("Content-Length") || 0) > 7 * 1024 * 1024)
@@ -157,7 +179,7 @@ const defaultHandler = {
         await req.json(),
       );
     }
-    if (u.pathname === "/health") return json({ ok: true, version: "0.3.2" });
+    if (u.pathname === "/health") return json({ ok: true, version: "0.3.3" });
     if (u.pathname === "/")
       return html(
         '<h1>Jiji MCP</h1><p>Open-source marketplace and account tools through your own Jiji browser session.</p><p>Start the extension-free companion, sign in on jiji.ng, then connect an MCP agent to <code>/mcp</code>. Use a one-time code from your companion to pair each agent.</p><p>This is an independent project, unaffiliated with Jiji.</p><a href="https://github.com/atomicman57/jiji-mcp">Source and installation</a>',
@@ -215,9 +237,41 @@ export class JijiBridge {
     this.poll = null;
     this.lastPoll = 0;
     this.cursors = new Map();
+    state.blockConcurrencyWhile(async () => {
+      const rows = await state.storage.list({ prefix: "cursor:", limit: 100 });
+      for (const [key, value] of rows) {
+        if (value.expires > Date.now()) this.cursors.set(key.slice(7), value);
+        else await state.storage.delete(key);
+      }
+    });
+  }
+  connectedSocket() {
+    return this.state
+      .getWebSockets("companion")
+      .find((ws) => ws.readyState === 1);
   }
   async fetch(req) {
     const p = new URL(req.url).pathname;
+    if (p === "/connect") {
+      if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+        return json({ error: "Upgrade required" }, 426);
+      // Only the authenticated outer Worker can address this installation's Object.
+      for (const old of this.state.getWebSockets("companion"))
+        old.close(4001, "Companion replaced");
+      const [client, server] = Object.values(new WebSocketPair());
+      this.state.acceptWebSocket(server, ["companion"]);
+      server.serializeAttachment({
+        protocol: 1,
+        connectionId: crypto.randomUUID(),
+      });
+      server.send(JSON.stringify({ type: "ready", protocol: 1 }));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    if (p === "/status")
+      return json({
+        connected: !!this.connectedSocket(),
+        transport: "hibernating-websocket",
+      });
     if (p === "/mcp") {
       const accountAccess = req.headers.get("X-Jiji-Account-Access") === "1";
       const request = async (m) => {
@@ -234,9 +288,9 @@ export class JijiBridge {
           throw new Error(
             "Account-feature access has not been granted. Reconnect this agent and explicitly enable account features on the consent page. Existing listing/chat access remains available.",
           );
-        if (m.action === "status" && Date.now() - this.lastPoll >= 40000)
+        if (m.action === "status" && !this.connectedSocket())
           return {
-            connected: Date.now() - this.lastPoll < 40000,
+            connected: false,
             message: "Cloud bridge heartbeat; Jiji login stays in Chrome.",
           };
         if (m.action === "login")
@@ -262,7 +316,7 @@ export class JijiBridge {
         )
           throw new Error("Unsupported companion action.");
         if (m.action === "fetch") validatePath(m.path);
-        if (Date.now() - this.lastPoll > 40000)
+        if (!this.connectedSocket())
           throw new Error(
             "Browser bridge offline. Connect the Jiji MCP companion on your computer.",
           );
@@ -281,6 +335,9 @@ export class JijiBridge {
           this.flush();
         });
       };
+      const beforeCursors = new Map(
+        [...this.cursors].map(([key, value]) => [key, JSON.stringify(value)]),
+      );
       const server = createServer(request, { cursors: this.cursors });
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
@@ -290,6 +347,13 @@ export class JijiBridge {
       try {
         return await transport.handleRequest(req);
       } finally {
+        // Timers exist only while real requests run. Pagination must survive idle eviction.
+        for (const [key, value] of this.cursors)
+          if (beforeCursors.get(key) !== JSON.stringify(value))
+            await this.state.storage.put("cursor:" + key, value);
+        for (const key of beforeCursors.keys())
+          if (!this.cursors.has(key))
+            await this.state.storage.delete("cursor:" + key);
         await transport.close();
         await server.close();
       }
@@ -321,34 +385,16 @@ export class JijiBridge {
       });
       return json({ ok }, ok ? 200 : 401);
     }
-    if (p === "/poll") {
-      this.lastPoll = Date.now();
-      if (this.poll) {
-        clearTimeout(this.poll.timer);
-        this.poll.resolve(json({ jobs: [] }));
-        this.poll = null;
-      }
-      if (this.jobs.length) return json({ jobs: this.jobs.splice(0, 4) });
-      return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          this.poll = null;
-          resolve(json({ jobs: [] }));
-        }, 20000);
-        this.poll = { resolve, timer };
-      });
-    }
-    if (p === "/result") {
-      const pending = this.pending.get(b.id);
-      if (!pending) return json({ error: "Expired request" }, 410);
-      this.pending.delete(b.id);
-      clearTimeout(pending.timer);
-      const result = b.result ?? b;
-      if (result.error)
-        pending.reject(new Error(String(result.error).slice(0, 500)));
-      else pending.resolve(result);
-      return json({ ok: true });
-    }
+    if (p === "/poll")
+      return json(
+        { error: "Companion upgrade required; connect through /bridge/socket" },
+        426,
+      );
+    if (p === "/result")
+      return json({ error: "Use the authenticated companion WebSocket" }, 426);
     if (p === "/disconnect") {
+      for (const ws of this.state.getWebSockets("companion"))
+        ws.close(1000, "Disconnected");
       this.lastPoll = 0;
       this.jobs = [];
       for (const t of this.pending.values()) {
@@ -366,11 +412,79 @@ export class JijiBridge {
     return json({ error: "Not found" }, 404);
   }
   flush() {
-    if (this.poll && this.jobs.length) {
-      const p = this.poll;
-      this.poll = null;
-      clearTimeout(p.timer);
-      p.resolve(json({ jobs: this.jobs.splice(0, 4) }));
+    const ws = this.connectedSocket();
+    for (const job of this.jobs.splice(0)) {
+      const pending = this.pending.get(job.id);
+      if (!pending) continue;
+      try {
+        if (!ws) throw new Error("Browser bridge disconnected.");
+        const message = JSON.stringify({ type: "job", job });
+        if (
+          new TextEncoder().encode(message).byteLength > 262144 ||
+          ws.bufferedAmount > 1048576
+        )
+          throw new Error("Browser bridge busy.");
+        pending.connectionId = socketConnectionId(ws);
+        ws.send(message);
+      } catch (error) {
+        clearTimeout(pending.timer);
+        this.pending.delete(job.id);
+        pending.reject(error);
+      }
     }
+  }
+  webSocketMessage(ws, message) {
+    if (
+      typeof message !== "string" ||
+      new TextEncoder().encode(message).byteLength > 7 * 1024 * 1024
+    ) {
+      ws.close(1009, "Message too large");
+      this.failSocket(ws);
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(message);
+    } catch {
+      ws.close(1008, "Invalid message");
+      this.failSocket(ws);
+      return;
+    }
+    if (
+      body?.type !== "result" ||
+      typeof body.id !== "string" ||
+      !body.result ||
+      typeof body.result !== "object" ||
+      Array.isArray(body.result)
+    ) {
+      ws.close(1008, "Invalid result");
+      this.failSocket(ws);
+      return;
+    }
+    const pending = this.pending.get(body.id);
+    if (!pending || !matchesSocket(pending.connectionId, ws)) return; // Unknown/late result: never replay an operation.
+    clearTimeout(pending.timer);
+    this.pending.delete(body.id);
+    if (body.result.error)
+      pending.reject(new Error(String(body.result.error).slice(0, 500)));
+    else pending.resolve(body.result);
+  }
+  failSocket(ws) {
+    for (const [id, pending] of this.pending)
+      if (matchesSocket(pending.connectionId, ws)) {
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(
+          new Error("Browser connection lost; the operation was not retried."),
+        );
+      }
+  }
+  webSocketClose(ws) {
+    this.failSocket(ws);
+    ws.close(1000);
+  }
+  webSocketError(ws) {
+    this.failSocket(ws);
+    ws.close(1011, "Connection error");
   }
 }

@@ -29,6 +29,7 @@ test(
             },
           }),
         );
+    const sockets = [];
     try {
       if (mf) {
         const db = (await mf.getBindings()).MCP_STORAGE;
@@ -47,8 +48,52 @@ test(
               ...init,
               signal: init.signal || AbortSignal.timeout(45000),
             });
-      const browser = (path, body = {}, token = "a".repeat(64)) =>
-        dispatch(path, {
+      const queuedJobs = [],
+        waiters = [];
+      async function connectSocket(token = "a".repeat(64)) {
+        if (!mf)
+          throw new Error(
+            "WebSocket integration test requires local Miniflare; live checks use the native companion.",
+          );
+        const response = await dispatch("/bridge/socket", {
+          headers: { Upgrade: "websocket", Authorization: "Bearer " + token },
+        });
+        assert.equal(response.status, 101);
+        const socket = response.webSocket;
+        sockets.push(socket);
+        const ready = new Promise((resolve) =>
+          socket.addEventListener("message", (event) => {
+            const message = JSON.parse(event.data);
+            if (message.type === "ready") resolve();
+            if (message.type === "job") {
+              if (waiters.length)
+                waiters.shift()(Response.json({ jobs: [message.job] }));
+              else queuedJobs.push(message.job);
+            }
+          }),
+        );
+        socket.accept();
+        await ready;
+        return socket;
+      }
+      const companion = await connectSocket();
+      const nextJobResponse = () =>
+        queuedJobs.length
+          ? Promise.resolve(Response.json({ jobs: [queuedJobs.shift()] }))
+          : new Promise((resolve) => waiters.push(resolve));
+      const browser = (path, body = {}, token = "a".repeat(64)) => {
+        if (path === "/bridge/result" && token === "a".repeat(64)) {
+          const { id, ...result } = body;
+          companion.send(
+            JSON.stringify({
+              type: "result",
+              id,
+              result: body.result ?? result,
+            }),
+          );
+          return Promise.resolve(Response.json({ ok: true }));
+        }
+        return dispatch(path, {
           method: "POST",
           headers: {
             Authorization: "Bearer " + token,
@@ -56,6 +101,28 @@ test(
           },
           body: JSON.stringify(body),
         });
+      };
+      assert.equal(
+        (
+          await dispatch("/bridge/socket", {
+            headers: { Upgrade: "websocket" },
+          })
+        ).status,
+        401,
+      );
+      assert.equal((await browser("/bridge/poll")).status, 426);
+      assert.equal(
+        (
+          await dispatch("/bridge/socket", {
+            headers: {
+              Upgrade: "websocket",
+              Authorization: "Bearer " + "a".repeat(64),
+              Origin: "https://hostile.example",
+            },
+          })
+        ).status,
+        403,
+      );
       const unauth = await dispatch("/mcp", { method: "POST" });
       assert.equal(unauth.status, 401);
       assert.match(unauth.headers.get("www-authenticate"), /resource_metadata/);
@@ -141,31 +208,44 @@ test(
         });
       const list = await (await rpc("tools/list", {})).json();
       assert.equal(list.result.tools.length, 21);
-      // Establish a heartbeat first: live network ordering may deliver the MCP
-      // call before a newly started long poll reaches its Durable Object.
-      await browser("/bridge/poll");
-      const poll = browser("/bridge/poll");
+      const poll = nextJobResponse();
       const search = rpc("tools/call", {
         name: "jiji_search",
-        arguments: { query: "router" },
+        arguments: { query: "router", limit: 1 },
       });
       const jobs = await (await poll).json();
       assert.equal(jobs.jobs.length, 1);
       const job = jobs.jobs[0];
       assert.match(job.path, /query=router/);
-      const wrong = await browser(
-        "/bridge/result",
-        { id: job.id, status: 200, body: {} },
-        "b".repeat(64),
+      const wrong = await connectSocket("b".repeat(64));
+      wrong.send(
+        JSON.stringify({
+          type: "result",
+          id: job.id,
+          result: { status: 200, body: {} },
+        }),
       );
-      assert.equal(wrong.status, 410);
+      assert.equal(
+        await Promise.race([
+          search.then(() => false),
+          new Promise((resolve) => setTimeout(() => resolve(true), 40)),
+        ]),
+        true,
+      );
+      wrong.close(1000);
       const delivered = await browser("/bridge/result", {
         id: job.id,
         status: 200,
         body: {
           adverts_list: {
-            count: 1,
+            count: 2,
             adverts: [
+              {
+                guid: "abcdefgh23456789",
+                title: "Another router",
+                url: "/second.html",
+                price_obj: { value: 200 },
+              },
               {
                 guid: "abcdefgh12345678",
                 title: "Test router",
@@ -178,7 +258,43 @@ test(
       });
       assert.equal(delivered.status, 200);
       const answer = await (await search).json();
-      assert.match(answer.result.content[0].text, /Test router/);
+      assert.match(answer.result.content[0].text, /Another router/);
+      const nextCursor = JSON.parse(answer.result.content[0].text).next_cursor;
+      assert.ok(nextCursor);
+      const userId = createHash("sha256").update("a".repeat(64)).digest("hex");
+      await mf.unsafeEvictDurableObject("jiji", "JijiBridge", {
+        name: userId,
+        webSockets: "hibernate",
+      });
+      assert.equal(
+        (await (await browser("/bridge/status")).json()).connected,
+        true,
+      );
+      const nextPage = await (
+        await rpc("tools/call", {
+          name: "jiji_next_page",
+          arguments: { cursor: nextCursor, limit: 1 },
+        })
+      ).json();
+      assert.match(nextPage.result.content[0].text, /Test router/);
+      // Buffered cursors do not exercise the socket after hibernation.
+      // A fresh browser job must complete through the retained connection too.
+      const resumedStatus = rpc("tools/call", {
+        name: "jiji_connection_status",
+        arguments: {},
+      });
+      const resumedJobs = await (await nextJobResponse()).json();
+      assert.equal(resumedJobs.jobs[0].request.action, "status");
+      await browser("/bridge/result", {
+        id: resumedJobs.jobs[0].id,
+        result: { connected: true, signed_in: true },
+      });
+      const resumedAnswer = await (await resumedStatus).json();
+      assert.equal(resumedAnswer.result.isError, undefined);
+      assert.equal(
+        JSON.parse(resumedAnswer.result.content[0].text).signed_in,
+        true,
+      );
       // Older grants cannot gain private account access through a client header.
       const denied = await dispatch("/mcp", {
         method: "POST",
@@ -237,7 +353,7 @@ test(
       });
       assert.equal(secondTokens.status, 200);
       tokens = await secondTokens.json();
-      const accountPoll = browser("/bridge/poll");
+      const accountPoll = nextJobResponse();
       const accountCall = rpc("tools/call", {
         name: "jiji_account_data",
         arguments: { resource: "balance" },
@@ -254,7 +370,7 @@ test(
       );
       // Approval IDs and transport IDs must never overwrite each other.
       const planId = "11111111-1111-4111-8111-111111111111";
-      const planPoll = browser("/bridge/poll");
+      const planPoll = nextJobResponse();
       const planCall = rpc("tools/call", {
         name: "jiji_action_status",
         arguments: { id: planId },
@@ -283,8 +399,20 @@ test(
         }),
       });
       assert.notEqual(replay.status, 200);
+      const interruptedJob = nextJobResponse();
+      const interruptedCall = rpc("tools/call", {
+        name: "jiji_action_status",
+        arguments: { id: planId },
+      });
+      await interruptedJob;
+      companion.close(1000);
+      const interrupted = await (await interruptedCall).json();
+      assert.equal(interrupted.result.isError, true);
+      assert.match(interrupted.result.content[0].text, /not retried/);
       await browser("/bridge/disconnect");
     } finally {
+      for (const socket of sockets)
+        if (socket.readyState === 1) socket.close(1000);
       await mf?.dispose();
     }
   },

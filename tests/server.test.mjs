@@ -68,10 +68,12 @@ test("MCP lists tools, paginates with authoritative URL, and reads details", asy
   });
   try {
     assert.equal((await x.client.listTools()).tools.length, 21);
-    const call = async (name, args) =>
-      JSON.parse(
-        (await x.client.callTool({ name, arguments: args })).content[0].text,
-      );
+    const call = async (name, args) => {
+      const result = await x.client.callTool({ name, arguments: args });
+      const data = JSON.parse(result.content[0].text);
+      assert.deepEqual(result.structuredContent, { data });
+      return data;
+    };
     const found = await call("jiji_search", { query: "router" });
     assert.equal(found.results.length, 1);
     await call("jiji_next_page", { cursor: found.next_cursor });

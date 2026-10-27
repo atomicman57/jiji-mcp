@@ -1,6 +1,6 @@
 {
   "name": "jiji-browser-mcp",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Extension-free Jiji MCP with browser login, marketplace research and locally approved account actions",
   "type": "module",
   "license": "MIT",
@@ -21,6 +21,7 @@
     "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "playwright": "^1.64.1",
+    "ws": "^8.22.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
