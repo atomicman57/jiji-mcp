@@ -86,7 +86,7 @@ npx wrangler kv namespace create OAUTH_KV
 Copy `wrangler.jsonc` to `wrangler.local.jsonc`, replace its KV namespace ID, then run:
 
 ```sh
-npx wrangler deploy --config wrangler.local.jsonc
+npx wrangler deploy --config wrangler.local.jsonc --durable-objects-code-update-mode immediate
 ```
 
 The Worker uses Cloudflare KV and per-user Durable Objects, plus `@cloudflare/workers-oauth-provider`. Configure `PUBLIC_ORIGIN` for a custom domain. Active companions maintain long polls; hosting usage costs and limits apply to the operator. Never commit credentials, browser profiles or personal deployment configuration.
