@@ -1,0 +1,64 @@
+import { randomUUID } from "node:crypto";
+export class ApprovalPlans {
+  constructor() {
+    this.plans = new Map();
+  }
+  prepare(value) {
+    for (const [id, p] of this.plans)
+      if (p.expires < Date.now() && p.state !== "executing")
+        this.plans.delete(id);
+    if (this.plans.size >= 100) throw new Error("Too many pending plans.");
+    const plan = {
+      ...value,
+      id: randomUUID(),
+      state: "pending",
+      created: Date.now(),
+      expires: Date.now() + 10 * 60000,
+    };
+    this.plans.set(plan.id, plan);
+    return this.public(plan);
+  }
+  public(p) {
+    return {
+      id: p.id,
+      type: p.type,
+      seller: p.seller,
+      title: p.title,
+      listing_url: p.listing_url,
+      message: p.message,
+      state: p.state,
+      expires_at: new Date(p.expires).toISOString(),
+      result: p.result,
+    };
+  }
+  get(id) {
+    const p = this.plans.get(id);
+    if (!p) throw new Error("Plan not found.");
+    return p;
+  }
+  async approve(id, send) {
+    const p = this.get(id);
+    if (p.state !== "pending")
+      throw new Error(
+        "This plan was already handled. It cannot be sent again.",
+      );
+    if (p.expires < Date.now()) {
+      p.state = "expired";
+      throw new Error("Plan expired. Prepare a new one.");
+    }
+    p.state = "executing";
+    try {
+      p.result = await send(p);
+      p.state = "sent";
+      return this.public(p);
+    } catch (e) {
+      p.state = "uncertain";
+      p.result = {
+        error: e.message,
+        message:
+          "No automatic retry. Check the conversation before preparing another message.",
+      };
+      return this.public(p);
+    }
+  }
+}

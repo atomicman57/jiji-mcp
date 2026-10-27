@@ -7,11 +7,12 @@ export function validatePath(path) {
     u.hash ||
     !(
       /^\/api_web\/v1\/listing$/.test(u.pathname) ||
-      /^\/api_web\/v1\/item\/[A-Za-z0-9]{8,64}$/.test(u.pathname)
+      /^\/api_web\/v1\/item\/[A-Za-z0-9]{8,64}$/.test(u.pathname) ||
+      /^\/api_web\/v1\/ad[A-Za-z0-9]{8,64}_phone\.json$/.test(u.pathname)
     )
   ) {
     throw new Error(
-      "Only Jiji listing search and item detail endpoints are allowed.",
+      "Only Jiji listing, item detail, and individual seller-contact endpoints are allowed.",
     );
   }
   const allowed = u.pathname.endsWith("/listing")
@@ -28,7 +29,9 @@ export function validatePath(path) {
         "price_min",
         "price_max",
       ]
-    : ["webp"];
+    : u.pathname.endsWith("_phone.json")
+      ? []
+      : ["webp"];
   for (const key of u.searchParams.keys())
     if (!allowed.includes(key))
       throw new Error("Unsupported search parameter.");
@@ -48,6 +51,9 @@ export function normalize(ad, seller = {}) {
     title: ad.title,
     url: listingUrl(ad.url),
     status: ad.status,
+    chat_url: /^\/profile-messages\/[A-Za-z0-9_]+$/.test(ad.message_url || "")
+      ? ad.message_url
+      : null,
     price_ngn: ad.price_obj?.value ?? null,
     price_text: ad.price_obj?.view ?? ad.price_title ?? null,
     location:

@@ -25,11 +25,11 @@ const random = () =>
   [...crypto.getRandomValues(new Uint8Array(32))]
     .map((v) => v.toString(16).padStart(2, "0"))
     .join("");
-function html(body, headers = {}) {
+function html(body, headers = {}, referrerPolicy = "same-origin") {
   const h = new Headers(headers);
   h.set("Content-Type", "text/html;charset=utf-8");
   h.set("Cache-Control", "no-store");
-  h.set("Referrer-Policy", "no-referrer");
+  h.set("Referrer-Policy", referrerPolicy);
   h.set("X-Content-Type-Options", "nosniff");
   h.set(
     "Content-Security-Policy",
@@ -54,7 +54,7 @@ async function authorize(req, env) {
     if (auth.scope.some((s) => !["jiji:read", "offline_access"].includes(s)))
       return json({ error: "Unsupported permission" }, 400);
     return html(
-      `<h1>Connect Jiji to your agent</h1><p><strong>${escape(info.clientName)}</strong> wants to search and read listings through your Jiji browser bridge.</p><p>Return address: ${escape(info.redirectHost)}. The client name may be self-registered.</p><p>Open the Jiji MCP extension and choose <strong>Pair an agent</strong>. Enter its one-time pairing code below. Only continue if you started this connection.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label>Pairing code<input name="code" autocomplete="off" spellcheck="false" required maxlength="32"></label><p>Allows listing search and details. Your Jiji password, cookies and verification codes stay in Chrome. No seller messages or payments.</p><button name="decision" value="approve">Connect agent</button><button name="decision" value="deny" formnovalidate>Cancel</button></form>`,
+      `<h1>Connect Jiji to your agent</h1><p><strong>${escape(info.clientName)}</strong> wants to use your Jiji companion for listing research, selected seller contacts and your private Jiji conversations.</p><p>Return address: ${escape(info.redirectHost)}. The client name may be self-registered.</p><p>Open the Jiji MCP companion and choose <strong>Pair an agent</strong>. Enter its one-time pairing code below. Only continue if you started this connection.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label>Pairing code<input name="code" autocomplete="off" spellcheck="false" required maxlength="32"></label><p>Allows listing research, selected seller contacts, private chat reading and message drafts. Your Jiji password, cookies and verification codes stay in your companion browser. Messages require separate local approval; payments are not supported.</p><button name="decision" value="approve">Connect agent</button><button name="decision" value="deny" formnovalidate>Cancel</button></form>`,
       consent.headers,
     );
   }
@@ -77,13 +77,13 @@ async function authorize(req, env) {
     .toLowerCase();
   if (!/^[a-f0-9]{20}$/.test(code))
     return html(
-      "<h1>Invalid pairing code</h1><p>Restart the connection and use a fresh code from the extension.</p>",
+      "<h1>Invalid pairing code</h1><p>Restart the connection and use a fresh code from the companion.</p>",
     );
   const codeHash = await hash(code);
   const user = await env.OAUTH_KV.get("pair:" + codeHash);
   if (!user)
     return html(
-      "<h1>Pairing code expired</h1><p>Generate a new code in the extension and restart the connection.</p>",
+      "<h1>Pairing code expired</h1><p>Generate a new code in the companion and restart the connection.</p>",
     );
   const consumed = await call(env, user, "/consume", { codeHash });
   if (!consumed.ok)
@@ -102,6 +102,7 @@ async function authorize(req, env) {
   return html(
     `<h1>Jiji connected</h1><p>Your agent can now read listings while your bridge is connected.</p><a href="${escape(redirectTo)}" rel="noreferrer noopener">Continue to your agent</a>`,
     approved.headers,
+    "no-referrer",
   );
 }
 const apiHandler = {
@@ -147,10 +148,10 @@ const defaultHandler = {
         await req.json(),
       );
     }
-    if (u.pathname === "/health") return json({ ok: true, version: "0.1.0" });
+    if (u.pathname === "/health") return json({ ok: true, version: "0.2.0" });
     if (u.pathname === "/")
       return html(
-        '<h1>Jiji MCP</h1><p>Open-source listing search through your own Jiji browser session.</p><p>Install the browser bridge, sign in on jiji.ng, then connect an MCP agent to <code>/mcp</code>. Use a one-time code from your extension to pair each agent.</p><p>This is an independent project, unaffiliated with Jiji.</p><a href="https://github.com/atomicman57/jiji-mcp">Source and installation</a>',
+        '<h1>Jiji MCP</h1><p>Open-source listing search through your own Jiji browser session.</p><p>Start the extension-free companion, sign in on jiji.ng, then connect an MCP agent to <code>/mcp</code>. Use a one-time code from your companion to pair each agent.</p><p>This is an independent project, unaffiliated with Jiji.</p><a href="https://github.com/atomicman57/jiji-mcp">Source and installation</a>',
       );
     return json({ error: "Not found" }, 404);
   },
@@ -206,7 +207,7 @@ export class JijiBridge {
     const p = new URL(req.url).pathname;
     if (p === "/mcp") {
       const request = async (m) => {
-        if (m.action === "status")
+        if (m.action === "status" && Date.now() - this.lastPoll >= 40000)
           return {
             connected: Date.now() - this.lastPoll < 40000,
             message: "Cloud bridge heartbeat; Jiji login stays in Chrome.",
@@ -216,10 +217,22 @@ export class JijiBridge {
             message:
               "Open https://jiji.ng/login.html in Chrome on the computer running your bridge. Login cannot be completed in an agent chat.",
           };
-        validatePath(m.path);
+        if (
+          ![
+            "status",
+            "fetch",
+            "inbox",
+            "conversation",
+            "saved",
+            "prepare_message",
+            "plan_status",
+          ].includes(m.action)
+        )
+          throw new Error("Unsupported companion action.");
+        if (m.action === "fetch") validatePath(m.path);
         if (Date.now() - this.lastPoll > 40000)
           throw new Error(
-            "Browser bridge offline. Connect the Jiji MCP extension on your computer.",
+            "Browser bridge offline. Connect the Jiji MCP companion on your computer.",
           );
         if (this.pending.size >= 20) throw new Error("Browser bridge busy.");
         return new Promise((resolve, reject) => {
@@ -298,7 +311,7 @@ export class JijiBridge {
       this.pending.delete(b.id);
       clearTimeout(pending.timer);
       if (b.error) pending.reject(new Error(String(b.error).slice(0, 500)));
-      else pending.resolve({ status: b.status, body: b.body });
+      else pending.resolve(b);
       return json({ ok: true });
     }
     if (p === "/disconnect") {

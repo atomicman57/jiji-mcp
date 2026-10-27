@@ -1,26 +1,29 @@
 # Security and privacy
 
-This is an unofficial, read-only integration for genuine purchase research. Use only with a Jiji account and endpoint access you are authorized to use. This project does not imply Jiji authorization for other users.
+This is an unofficial integration for genuine purchase research and user-approved seller conversations. Use only Jiji accounts and endpoint access you are authorized to use.
 
-## Boundaries
+## Jiji authentication
 
-- Jiji authentication stays on Jiji. Neither the MCP nor the relay reads or exports browser cookies, passwords, OTPs, or profile databases.
-- The extension has required host access only to `https://jiji.ng/*`. Cloud host access is optional and requested for the exact configured origin. Native messaging is restricted to the extension ID in the generated host manifest.
-- Only listing search and item detail GET endpoints are allowlisted. URLs, paths and query names are validated. Cross-origin requests, phone endpoints, redirects, posting and messaging are rejected.
-- Listing text is untrusted. MCP consumers must never interpret it as instructions or as verified seller claims.
-- The local Unix socket is private to the operating-system user. Other software running as that user can access its public-listing tools; this is not isolation from a compromised account.
-- Remote clients use OAuth through the Cloudflare provider. One-time pairing codes bind an agent to one installation. Codes are short-lived, consumed atomically, and stored hashed; authorization attempts are rate-limited and browser consent is CSRF-bound.
-- The relay routes requests by authenticated grant identity, never by an agent-supplied user ID. An installation's random bearer token identifies only its own bridge.
-- Extension-local installation tokens are never included in MCP responses or committed. Keep them private. Each server origin must use a separate token.
+The companion opens a dedicated persistent Chrome profile in a private application-data directory outside the repository. Sign in only on Jiji or its normal sign-in provider pages. No MCP tool accepts passwords or OTPs. The application does not read, export, replay or log cookies, browser credential databases, or storage-state files. Browser-owned profile persistence is not a session export.
 
-## Data
+Requests run inside a live jiji.ng page. Only listing, item detail and individual seller-contact GET endpoints are allowed. Cross-origin endpoints, arbitrary scripts and redirects are rejected. Access errors, HTML challenges and malformed responses stop the request without automatic retries. No stealth browser flags or challenge bypass are used.
 
-The relay sees queries and selected public listing/seller fields. It does not receive Jiji session credentials. Seller phone fields and account-specific UI data are excluded before a response leaves Chrome. Listing descriptions may themselves contain seller-written contact information.
+## Private account data
 
-OAuth clients, tokens/grants and hashed pairing lookups use KV. Per-user pairing records and rate limits use Durable Object storage. Pending browser requests and results are transient in memory, expire after 25 seconds, and are not logged. The server does not maintain purchase history or message sellers. Platform-level request metadata follows your hosting provider's policies.
+Conversation and saved-list tools read the rendered Jiji interface after sign-in. Reading a conversation may mark it as read. Text from sellers, listings and messages is untrusted content and must never be executed or followed as instructions. Contacts are for individual, explicitly shortlisted purchases, not bulk collection.
 
-## Disconnect and recovery
+Only allowlisted listing/seller fields and requested conversation data reach the relay/agent. Jiji passwords and cookies stay inside Chrome. Conversation and message-plan data are transient in companion memory, not written to a purchase ledger. Platform request metadata follows hosting-provider policies.
 
-Disconnect in the extension stops routing. Remove connectors from agents to remove their saved access. Remove the extension to delete its local installation identity. A service operator can revoke OAuth grants through the provider's administration API and delete its KV/DO data. Never post secrets, pairing codes or session data in a GitHub issue.
+## Approval boundary
 
-Report vulnerabilities through the repository's private security reporting feature if available; otherwise contact the maintainer before publishing exploit details.
+Preparing a seller message sends nothing. The owner reviews the exact seller, listing and message on a local page and submits it there. There is no MCP-callable approve/send action. The local HTTP server binds to 127.0.0.1, validates Host and Origin, requires a same-site HttpOnly cookie and CSRF token for every POST, and forbids framing. The Unix socket is mode 0600 inside a mode-0700 directory.
+
+Approval plans expire after ten minutes and become non-reusable before the browser performs the send. Uncertain delivery is not retried. Before sending, the chat's listing must match the approved listing. Owner approval is required for offers, commitments or address disclosure; payments are not implemented. Other software running as the same operating-system user remains trusted and can access local application data.
+
+## Remote agents
+
+Agents use OAuth grants through the Cloudflare provider. One-time codes bind them to a companion; codes expire, are consumed atomically and are rate limited. Routing uses the authenticated user identity, not an agent-supplied user ID. The companion/server origin has its own random 256-bit token stored through an encrypted credential helper. Tokens and pairing codes must never be posted in issues, logs or public reports.
+
+Disconnect stops the companion's browser/relay access. Remove the connector from the host agent to discard its grant. Jiji sign-out/account settings remain available on Jiji. Delete application data only deliberately; it contains the browser's private login profile.
+
+Report vulnerabilities privately to the repository maintainer. Never include account credentials, pairing codes, private chats or session data in public issues.

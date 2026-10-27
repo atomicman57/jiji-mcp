@@ -18,7 +18,7 @@ export function bridgeRequest(message, socket = socketPath) {
       client.destroy();
       reject(e);
     };
-    client.setTimeout(35000, () =>
+    client.setTimeout(90000, () =>
       fail(
         new Error(
           "Jiji browser request timed out. Open Jiji and check the bridge.",
@@ -28,7 +28,7 @@ export function bridgeRequest(message, socket = socketPath) {
     client.on("error", () =>
       fail(
         new Error(
-          "Jiji bridge is disconnected. Open the Jiji MCP extension in Chrome and choose Connect.",
+          "Jiji companion is disconnected. Start npm run companion, then open http://127.0.0.1:38473. No extension is needed.",
         ),
       ),
     );

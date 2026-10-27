@@ -64,6 +64,7 @@ test("cloud OAuth pairing, PKCE, isolation, and browser routing", async () => {
     });
     const page = await dispatch("/authorize?" + authQuery);
     assert.equal(page.status, 200);
+    assert.equal(page.headers.get("referrer-policy"), "same-origin");
     const text = await page.text();
     const handle = text.match(/name="handle" value="([^"]+)"/)[1];
     const cookie = page.headers.get("set-cookie").split(";")[0];
@@ -111,7 +112,7 @@ test("cloud OAuth pairing, PKCE, isolation, and browser routing", async () => {
         body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
       });
     const list = await (await rpc("tools/list", {})).json();
-    assert.equal(list.result.tools.length, 5);
+    assert.equal(list.result.tools.length, 14);
     const poll = browser("/bridge/poll");
     const search = rpc("tools/call", {
       name: "jiji_search",

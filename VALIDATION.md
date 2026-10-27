@@ -1,12 +1,9 @@
-# Validation — 2026-10-27
+# Validation — version 0.2.0
 
-- Eight automated tests pass: MCP discovery/search/pagination/details; restricted-response handling; endpoint validation; exclusion of account and seller-phone fields; native messaging framing and private socket permissions; browser-request sanitization; cloud OAuth pairing/PKCE and user isolation.
-- The cloud Worker builds successfully. `npm audit` reports zero vulnerabilities.
-- The deployed HTTPS endpoint passed the cloud integration test with synthetic listing data: unauthenticated access rejected, one-time pairing, OAuth authorization-code exchange with PKCE, tool discovery, per-user browser routing, and authorization-code replay rejection.
-- Jiji search and item-detail GET endpoints were separately verified through a live Jiji Chrome tab using the existing browser session.
+Eleven automated tests currently cover MCP discovery and research, individual-contact/WhatsApp fixtures, conversation routing, draft preparation without sending, one-time/expired/concurrent approval, uncertain delivery without retry, cross-origin rejection, private local socket permissions, and cloud OAuth/PKCE and user isolation.
 
-## Pending manual verification
+The extension-free companion service and its control page run on this Mac. It opens a dedicated Jiji browser and reports whether visible account controls indicate sign-in. No browser extension or copied cookie/session file is used.
 
-The unpacked extension could not be installed by the development agent because its browser policy blocks `chrome://extensions`. Live extension popup inspection, real Jiji results through the full extension/MCP path, and client-specific Grokbot/ChatGPT/Claude connector sign-in remain pending manual installation. Local client configuration is separate from a successful live connection.
+Live Jiji search/item endpoints were separately checked in an existing browser session. The previous cloud relay passed a live OAuth/routing test using synthetic listing data. Version 0.2.0 must be checked after deployment and each client must be checked separately.
 
-The hosted integration test uses synthetic listing data and does not prove live Jiji authentication through the installed extension. No seller was contacted, offer made, or payment initiated.
+Pending: completing Jiji login in the dedicated companion, authenticated inbox/saved-list verification through that companion, real-client installation checks, and a live seller send (not performed as part of testing). Full Jiji platform coverage is not claimed; see FEATURES.md.

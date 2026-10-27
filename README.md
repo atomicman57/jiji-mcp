@@ -1,43 +1,42 @@
 # Jiji MCP
 
-An independent, MIT-licensed MCP server for Jiji Nigeria. Search and inspect listings from Codex, Claude, Cursor, Grokbot, or another MCP client, using your own Jiji session in Chrome.
+An independent, MIT-licensed MCP for Jiji, with **no browser extension required**. Sign in directly on Jiji in the companion's dedicated Chrome window. Codex, Claude, ChatGPT and Grokbot can share your companion through local MCP or an authenticated HTTPS relay.
 
-Hosted MCP endpoint: **https://jiji-browser-mcp.felicity-blessing.workers.dev/mcp**. Source is self-hostable; each user connects their own browser bridge and signs in to Jiji directly.
+This project is not affiliated with Jiji. Undocumented endpoints and page selectors can change. It reproduces the verified buying/research workflow; it does not implement every Jiji account, advertising, billing or listing-management feature. See [FEATURES.md](FEATURES.md) and [VALIDATION.md](VALIDATION.md).
 
-**Status: initial implementation.** Automated tests cover MCP tool calls and the cloud authentication flow. Check the release notes for live-client verification. This project is not affiliated with or endorsed by Jiji. Its undocumented web endpoints may change.
+## Capabilities
 
-## Sign in to Jiji
+| Tools                                                   | Function                                                                             |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `jiji_open_sign_in`, `jiji_connection_status`           | Extension-free browser login and connection status                                   |
+| `jiji_search`, `jiji_next_page`, `jiji_listing_details` | Search, filters, authoritative pagination and full listing details                   |
+| `jiji_compare_listings`, `jiji_market_prices`           | Compare shortlisted sellers and advertised asking prices for buying/resale research  |
+| `jiji_seller_contact`, `jiji_whatsapp_handoff`          | One selected seller's contacts and a WhatsApp handoff package; no automatic outreach |
+| `jiji_list_conversations`, `jiji_read_conversation`     | Your inbox previews and recent conversation messages                                 |
+| `jiji_saved_listings`                                   | Read your existing saved listings                                                    |
+| `jiji_prepare_message`, `jiji_message_status`           | Prepare an exact message, review it locally, and check its outcome                   |
 
-Sign in on **https://jiji.ng** in your normal Chrome profile. The extension performs read-only requests inside a Jiji tab. It never reads, exports, or replays cookies, passwords, OTPs, or browser profile databases. If Jiji requires a challenge, authentication, or verification, complete it on the Jiji page yourself. The MCP does not solve CAPTCHAs or retry restrictions.
+There is no MCP send/approve tool. `jiji_prepare_message` returns a local approval page showing the exact seller, listing and message. Only the owner can submit that page. Each plan expires after ten minutes and can be used once. An uncertain result is not retried automatically. No payments or automatic binding offers are implemented.
 
-The MCP exposes five tools:
+## Install (macOS)
 
-| Tool                     | Purpose                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------- |
-| `jiji_open_sign_in`      | Open Jiji's normal login page, or give the browser login URL for a remote agent |
-| `jiji_connection_status` | Check the bridge connection; does not claim that a user is authenticated        |
-| `jiji_search`            | Search and sort listings, with optional price/region/category filters           |
-| `jiji_next_page`         | Follow the exact pagination URL returned by Jiji through an opaque cursor       |
-| `jiji_listing_details`   | Read a listing's description, attributes, images, price and seller signals      |
-
-No messaging, offers, seller phone retrieval, ad posting, or payments are implemented. Descriptions and seller claims are unverified third-party content.
-
-## Local setup (macOS)
-
-Requires Node.js 22 or later and Google Chrome. Windows/Linux native-host installation is not yet included.
+Requires Node.js 22+ and Google Chrome.
 
 ```sh
 git clone https://github.com/atomicman57/jiji-mcp.git
 cd jiji-mcp
 npm ci
-npm run install:bridge
+npm run install:companion
+npm run companion
 ```
 
-1. Open `chrome://extensions` and enable Developer mode.
-2. Choose **Load unpacked**, then select this project's `extension` directory.
-3. Open **Jiji MCP Browser Bridge**, choose **Connect bridge**, and keep a Jiji tab open.
-4. Choose **Open Jiji sign-in** and complete login directly on Jiji when needed.
-5. Add the server to your MCP client. Use the absolute Node and server paths printed by `install:bridge`:
+Open **http://127.0.0.1:38473**, choose **Open Jiji sign-in**, and log in directly on Jiji in the companion's Chrome window. Passwords, verification codes and cookies are never accepted by MCP tools or exported from the browser. The profile lives in a private application-data directory outside the repository. Complete any Jiji challenge manually; there is no bypass or automatic restriction retry.
+
+The companion is a local service; keep it running during use. A browser extension, native-messaging host and exported cookie file are not needed.
+
+## Local agents
+
+Use the absolute paths printed by `install:companion`:
 
 ```json
 {
@@ -50,7 +49,7 @@ npm run install:bridge
 }
 ```
 
-For Codex, the equivalent configuration is:
+For Codex:
 
 ```toml
 [mcp_servers.jiji]
@@ -58,40 +57,37 @@ command = "/absolute/path/to/node"
 args = ["/absolute/path/to/jiji-mcp/src/server.mjs"]
 ```
 
-Restart or refresh MCP discovery in the client. Multiple local clients can share the bridge. One Chrome profile owns the bridge at a time. Local connections use a Unix socket inside a mode-0700 directory, with a mode-0600 socket. No local TCP server or cookie file is required. Disconnect in the extension to stop access.
+The stdio server talks to the companion through a mode-0600 Unix socket inside a mode-0700 directory. Multiple agents can share one companion. Reload MCP discovery or restart the client after updates.
 
-## Cloud agents, including Grokbot
+## ChatGPT, Claude and Grokbot over HTTPS
 
-For clients that require an HTTPS MCP URL, deploy the included Cloudflare Worker or use a trusted deployment. Users retain their own Jiji session in their own Chrome browser.
+Enable the cloud relay in the application-data `config.json` printed by the installer. Set `cloudEnabled: true`, `cloudOrigin` to a trusted HTTPS server origin, and `credentialHelper` to an executable compatible with the encrypted credential-helper interface below. Restart the companion.
 
-1. In the extension, expand **Connect a cloud agent**.
-2. Enter the trusted server's HTTPS origin and choose **Use this server**. Chrome asks permission for that specific server.
-3. Add `https://YOUR_SERVER/mcp` as a custom MCP connector in the agent.
-4. Choose **Pair an agent** in the extension. Enter its one-time code on the server's connection page and approve the connection.
-5. Return to the agent to complete OAuth. Repeat pairing for each agent.
+1. Add the hosted `/mcp` URL as a custom MCP app/connector in your agent, using OAuth.
+2. On the companion control page choose **Generate pairing code**.
+3. Enter that one-time code on the MCP server's connection page and approve the displayed access.
+4. Follow **Continue to your agent**. Repeat with a fresh code for each agent.
 
-The agent receives an OAuth grant for your bridge. Pairing codes expire after ten minutes and can be consumed once. Each browser installation is isolated by a random 256-bit token stored in extension-local storage. The cloud receives allowlisted listing and seller fields; Jiji cookies and credentials stay in Chrome. Keep Chrome, the native bridge, and a Jiji tab available when using remote agents.
+OAuth connects an agent to your companion; Jiji sign-in happens only in the dedicated Jiji browser. Each companion/server origin has a separate random 256-bit identity. Pairing codes expire in ten minutes and are consumed once. The relay isolates users and stores no Jiji passwords or cookies. A cloud agent cannot approve a seller message through an MCP call.
 
-Only pair agents you trust. OAuth does not sign you into Jiji: it binds the agent to your browser bridge. Disconnect stops the bridge's local and remote requests; remove the connector in the agent to discard its grant. Uninstalling the extension removes its installation identity.
+The optional credential-helper CLI reads/writes a document named `jiji-mcp-companion` in an encrypted store. It must support `list-documents --prefix NAME` and `get-document NAME` with JSON on stdout, plus `put-document NAME` with JSON on stdin. The document contains an `identities` object keyed by HTTPS origin. The application pipes these values internally and never logs them. Local MCP tools do not need a credential helper or cloud identity.
 
-## Self-host the cloud relay
+## Self-host the relay
 
 ```sh
 npx wrangler login
 npx wrangler kv namespace create OAUTH_KV
 ```
 
-Set the resulting KV namespace ID in a copy of `wrangler.jsonc`, and deploy:
+Copy `wrangler.jsonc` to `wrangler.local.jsonc`, replace its KV namespace ID, then run:
 
 ```sh
 npx wrangler deploy --config wrangler.local.jsonc
 ```
 
-The deployment creates a Durable Object namespace for per-user routing, isolated queues, one-time pairing, and login rate limits. OAuth token/grant storage uses KV through `@cloudflare/workers-oauth-provider`. Use a dedicated namespace. Configure `PUBLIC_ORIGIN` when using a custom domain. Cloudflare usage costs and limits apply to the deployment owner; active bridges maintain long polls.
+The Worker uses Cloudflare KV and per-user Durable Objects, plus `@cloudflare/workers-oauth-provider`. Configure `PUBLIC_ORIGIN` for a custom domain. Active companions maintain long polls; hosting usage costs and limits apply to the operator. Never commit credentials, browser profiles or personal deployment configuration.
 
-Use your own deployment credentials. No user-specific configuration, Jiji credentials, deployment secrets, or generated native-host wrapper should be committed.
-
-## Development
+## Development and tests
 
 ```sh
 npm run cloud:build
@@ -99,10 +95,6 @@ npm test
 npm audit
 ```
 
-Run `npm run install:bridge` after changing shared protocol code, then reload the extension in Chrome and refresh Jiji. Cloud tests use Miniflare and require the compiled Worker from `cloud:build`. Native host and popup smoke tests need Chrome. Automated tests never log in to Jiji or contact sellers.
+Tests cover tools, per-user OAuth routing, the local HTTP/Unix-socket boundary, and exact-message approval state. Live sign-in and each client connection must be verified separately. The tests never contact a real seller or initiate payment.
 
-Search is bounded to 20 returned listings per page and uses Jiji's authoritative next-page URL. Cursors are connection-local for stdio and bridge-local for cloud; they expire after 15 minutes and may be lost on a cloud instance restart. The extension spaces requests by at least 1.2 seconds and serializes browser work. It stops on access errors, HTML challenges, or malformed responses without automatic retries.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for trust boundaries, data retention, and reporting.
+See [SECURITY.md](SECURITY.md) for trust boundaries and [FEATURES.md](FEATURES.md) for explicit coverage and gaps.

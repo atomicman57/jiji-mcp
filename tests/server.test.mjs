@@ -23,7 +23,6 @@ test("rejects cross-origin, contacts, and unsupported paths", () => {
   for (const url of [
     "https://evil.test/api_web/v1/listing",
     "//evil.test/api_web/v1/listing",
-    "/api_web/v1/adabcdefgh_phone.json",
     "/api_web/v1/item/../../profile",
     "/api_web/v1/listing?redirect=evil",
     "https://x:y@jiji.ng/api_web/v1/listing",
@@ -68,7 +67,7 @@ test("MCP lists tools, paginates with authoritative URL, and reads details", asy
     };
   });
   try {
-    assert.equal((await x.client.listTools()).tools.length, 5);
+    assert.equal((await x.client.listTools()).tools.length, 14);
     const call = async (name, args) =>
       JSON.parse(
         (await x.client.callTool({ name, arguments: args })).content[0].text,
