@@ -130,7 +130,10 @@ test("advert approval preserves create vs edit and refuses changed draft identit
 test("checking login status cannot redirect an active sign-in provider", async () => {
   const browser = new JijiBrowser("/unused-test-profile");
   browser.context = {};
-  browser.page = { url: () => "https://accounts.google.com/signin" };
+  browser.page = {
+    url: () => "https://accounts.google.com/signin",
+    isClosed: () => false,
+  };
   const state = await browser.status();
   assert.equal(state.login_in_progress, true);
   assert.equal(state.signed_in, false);

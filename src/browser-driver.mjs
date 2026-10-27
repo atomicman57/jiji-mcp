@@ -24,7 +24,20 @@ export class JijiBrowser {
     return task;
   }
   async open() {
-    if (this.context) return this.page;
+    if (this.context) {
+      if (this.page && !this.page.isClosed()) return this.page;
+      const existing = this.context.pages().find((page) => !page.isClosed());
+      if (existing) {
+        this.page = existing;
+        return existing;
+      }
+      this.page = await this.context.newPage();
+      await this.page.goto("https://jiji.ng/", {
+        waitUntil: "domcontentloaded",
+        timeout: 30000,
+      });
+      return this.page;
+    }
     await fs.mkdir(this.profile, { recursive: true, mode: 0o700 });
     await fs.chmod(this.profile, 0o700);
     this.context = await chromium.launchPersistentContext(this.profile, {
@@ -52,7 +65,7 @@ export class JijiBrowser {
     return page;
   }
   async status() {
-    if (!this.context)
+    if (!this.context || !this.page || this.page.isClosed())
       return {
         connected: true,
         browser_open: false,

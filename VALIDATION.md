@@ -1,10 +1,10 @@
 # Validation — version 0.3.0
 
-Runtime implementation tested at commit `f4b7755` on 2026-10-27. Subsequent validation/documentation changes add explicit deployment-update mode and bounded live-test timeouts; the runtime implementation is unchanged.
+The platform runtime baseline was tested at commit `f4b7755` on 2026-10-27. A subsequent local browser lifecycle fix recovers a closed Jiji tab instead of retaining its unusable page reference. It preserves any surviving sign-in provider page. The hosted relay implementation is unchanged.
 
 ## Automated checks
 
-`npm run cloud:build`, `npm test` and `npm audit` passed. The suite has 18 tests covering tool discovery/research/pagination, catalog validation, credential/payment-field rejection and browser-side redaction, advert create/edit identity, native-offer target validation, saved-search routing, exact one-time/expired/concurrent approvals, uncertain outcomes without retry, private local socket/HTTP CSRF protections, and cloud OAuth/PKCE, user isolation, expanded consent and transport/approval ID separation.
+`npm run cloud:build` and `npm audit` passed for the platform baseline. After the local lifecycle fix, `npm test` passed all 20 tests, including closed-tab sign-in recovery and preserving an existing sign-in provider page. The suite also covers tool discovery/research/pagination, catalog validation, credential/payment-field rejection and browser-side redaction, advert create/edit identity, native-offer target validation, saved-search routing, exact one-time/expired/concurrent approvals, uncertain outcomes without retry, private local socket/HTTP CSRF protections, and cloud OAuth/PKCE, user isolation, expanded consent and transport/approval ID separation.
 
 Live OAuth fixtures establish a bridge heartbeat before issuing requests so network arrival order cannot create a false offline result. Remote HTTP requests have a 45-second timeout and the test has an overall 180-second limit. A prior live rerun hit a network timeout; its failure was not counted as a pass. Cloudflare deploys can temporarily mix Worker and Durable Object versions; the final relay deployment explicitly uses immediate object-code updates.
 
