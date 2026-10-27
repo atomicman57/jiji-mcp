@@ -73,6 +73,45 @@ test("catalog responses strip credentials before leaving the browser", async () 
     globalThis.location = oldLocation;
   }
 });
+test("account research omits embedded seller contacts but preserves owner details", async () => {
+  const driver = new JijiBrowser("/unused-test-profile");
+  driver.jijiPage = async () => ({ evaluate: async (fn, arg) => fn(arg) });
+  const oldFetch = globalThis.fetch,
+    oldLocation = globalThis.location;
+  globalThis.location = { origin: "https://jiji.ng" };
+  globalThis.fetch = async () =>
+    Response.json({
+      adverts: [
+        {
+          user_phone: "+2348000000000",
+          phoneNumber: "08000000000",
+          title: "Example",
+        },
+      ],
+      results: [{ advert: { phone: "08000000000", show_contact_on: true } }],
+      link: "https://wa.me/2348000000000",
+      fields: [{ name: "phone", value: "08000000000" }],
+      email: "owner@example.test",
+    });
+  try {
+    for (const resource of ["saved_adverts", "chat_rooms"]) {
+      driver.lastRequest = 0;
+      const { body } = await driver.readResource(resource, {});
+      assert.equal(body.adverts[0].title, "Example");
+      assert.equal(body.results[0].advert.show_contact_on, true);
+      assert.equal(body.fields[0].selected_contact_required, true);
+      assert.ok(!JSON.stringify(body).includes("8000000000"));
+      assert.ok(!JSON.stringify(body).includes("owner@example.test"));
+    }
+    driver.lastRequest = 0;
+    const { body } = await driver.readResource("personal_details", {});
+    assert.equal(body.email, "owner@example.test");
+    assert.equal(body.fields[0].value, "08000000000");
+  } finally {
+    globalThis.fetch = oldFetch;
+    globalThis.location = oldLocation;
+  }
+});
 test("advert approval preserves create vs edit and refuses changed draft identity", async () => {
   const browser = new JijiBrowser("/unused-test-profile");
   const calls = [];

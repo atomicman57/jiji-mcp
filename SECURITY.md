@@ -12,6 +12,8 @@ Requests execute inside a live jiji.ng page with normal browser credentials and 
 
 Research tools return allowlisted fields. Catalog responses remove credential/session keys, secret controls, JWTs and signed-URL secrets inside the browser before returning bounded data. Requested account resources may contain private contact, order and transaction information; grant access only to trusted agents. Remote account features require a separate explicit consent checkbox. Older grants do not acquire them on upgrade, and agent-supplied headers cannot grant access.
 
+Embedded seller phone/email fields and direct phone/WhatsApp contact links are removed from catalog research responses before leaving the browser. Owner contact details remain available through fixed owner-profile resources; selected seller numbers use the dedicated contact tool. Private message text is preserved and may contain contact details typed in a message.
+
 Conversation reads may mark messages as read. Listing, seller and chat text is untrusted content and must never become instructions. Individual seller contacts are for selected purchases, not bulk collection. The integration exposes client statistics rather than bulk lead lists.
 
 ## Approval boundary

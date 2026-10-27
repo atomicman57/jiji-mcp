@@ -421,7 +421,7 @@ export class JijiBrowser {
   async close() {
     await this.context?.close();
   }
-  async catalogRequest({ path, method = "GET", body }) {
+  async catalogRequest({ path, method = "GET", body, ownerContacts = false }) {
     const u = new URL(path, "https://jiji.ng");
     if (
       u.origin !== "https://jiji.ng" ||
@@ -435,7 +435,7 @@ export class JijiBrowser {
     if (pause) await new Promise((r) => setTimeout(r, pause));
     this.lastRequest = Date.now();
     return page.evaluate(
-      async ({ path, method, body }) => {
+      async ({ path, method, body, ownerContacts }) => {
         try {
           if (location.origin !== "https://jiji.ng")
             return { error: "Complete Jiji login in the browser." };
@@ -462,6 +462,10 @@ export class JijiBrowser {
           const text = await r.text();
           if (text.length > 6 * 1024 * 1024)
             return { error: "Response too large." };
+          const contactField = (name) =>
+            /(^|_)(phones?|mobile|whatsapp|e_?mail)(_(numbers?|address|formatted|raw))?$/.test(
+              name.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase(),
+            );
           const clean = (value, depth = 0) => {
             if (depth > 18) return null;
             if (Array.isArray(value))
@@ -474,10 +478,19 @@ export class JijiBrowser {
                 )
               )
                 return { name: value.name, owner_only: true };
+              if (
+                !ownerContacts &&
+                typeof value.name === "string" &&
+                contactField(value.name)
+              )
+                return { name: value.name, selected_contact_required: true };
               return Object.fromEntries(
                 Object.entries(value)
                   .filter(
-                    ([k]) =>
+                    ([k, v]) =>
+                      (ownerContacts ||
+                        typeof v === "boolean" ||
+                        !contactField(k)) &&
                       !/password|csrf|cookie|authorization|token|secret|session|passkey|webauthn|challenge|otp|credential|private.?key|signed.?url|upload.?url/i.test(
                         k,
                       ),
@@ -486,6 +499,13 @@ export class JijiBrowser {
               );
             }
             if (typeof value === "string") {
+              if (
+                !ownerContacts &&
+                /^(?:tel:|whatsapp:|https?:\/\/(?:wa\.me\/|(?:api\.|web\.)?whatsapp\.com\/send\?))/i.test(
+                  value,
+                )
+              )
+                return "[selected contact required]";
               if (/^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(value))
                 return "[credential omitted]";
               if (/^https?:\/\//.test(value)) {
@@ -511,11 +531,22 @@ export class JijiBrowser {
           };
         }
       },
-      { path: u.pathname + u.search, method, body },
+      { path: u.pathname + u.search, method, body, ownerContacts },
     );
   }
   async readResource(name, parameters) {
-    return this.catalogRequest(buildRead(name, parameters));
+    return this.catalogRequest({
+      ...buildRead(name, parameters),
+      ownerContacts: [
+        "personal_details",
+        "business_details",
+        "stores",
+        "store_form",
+        "deliveries",
+        "delivery_form",
+        "whatsapp_settings",
+      ].includes(name),
+    });
   }
   async executeAction(operation, parameters) {
     const plan = buildAction(operation, parameters);

@@ -1,30 +1,32 @@
 # Validation — version 0.3.0
 
-The platform runtime baseline was tested at commit `f4b7755` on 2026-10-27. A subsequent local browser lifecycle fix recovers a closed Jiji tab instead of retaining its unusable page reference. It preserves any surviving sign-in provider page. The hosted relay implementation is unchanged.
+Verified on 2026-10-27. The platform baseline is `f4b7755`; `f119ec6` adds closed-tab recovery. The latest local companion also removes embedded seller contact fields from account research while preserving owner profile contacts. The hosted relay implementation is unchanged.
 
 ## Automated checks
 
-`npm run cloud:build` and `npm audit` passed for the platform baseline. After the local lifecycle fix, `npm test` passed all 20 tests, including closed-tab sign-in recovery and preserving an existing sign-in provider page. The suite also covers tool discovery/research/pagination, catalog validation, credential/payment-field rejection and browser-side redaction, advert create/edit identity, native-offer target validation, saved-search routing, exact one-time/expired/concurrent approvals, uncertain outcomes without retry, private local socket/HTTP CSRF protections, and cloud OAuth/PKCE, user isolation, expanded consent and transport/approval ID separation.
+All **21 tests pass** after the browser lifecycle and contact-redaction fixes. They cover tool discovery, research/pagination, catalog schemas, credential and contact redaction inside the browser, owner profile preservation, advert identity, native-offer target validation, saved-search routing, one-time/concurrent/expired approvals, uncertain outcomes without retry, private socket/CSRF protections, and cloud OAuth/PKCE, isolation and expanded consent. `git diff --check` passes. Cloud build and dependency audit passed for the platform baseline; no dependency or Worker code changed in these local fixes.
 
-Live OAuth fixtures establish a bridge heartbeat before issuing requests so network arrival order cannot create a false offline result. Remote HTTP requests have a 45-second timeout and the test has an overall 180-second limit. A prior live rerun hit a network timeout; its failure was not counted as a pass. Cloudflare deploys can temporarily mix Worker and Durable Object versions; the final relay deployment explicitly uses immediate object-code updates.
+## Authenticated live checks
 
-## Live product evidence
+The owner signed in directly in the dedicated extension-free browser. Sign-in survived a normal companion restart; browser and cloud relay report connected.
 
-A fresh local stdio client and the running Codex tools discover all 21 tools and the final catalog of 73 read resources, 35 prepared actions and 42 workflows. Actual public search, item detail and search suggestions succeed through the extension-free companion.
+Of the **49 catalog resources accepting empty parameters**, 46 returned successful authenticated reads. This includes profile/business details, settings, saved adverts/searches, own adverts, notifications, follows, feedback, inspections, chat lists, balance, transaction history, statistics and Pro Sales. Transaction history explicitly returned `status: ok` without application errors.
 
-The final hosted deployment `efcb874d-e6e9-415f-81b0-efd2e843952e` passed the live OAuth/PKCE, isolation and routing fixture.
+Three resources returned HTTP 404: `orders`, `ad_sharing_pages` and `ad_sharing_active`. Their paths match Jiji's public web-client definitions. Both bought/sold order filters also returned 404, and the current account menu does not offer orders or advert sharing. They are unavailable on this account/site; the test does not prove why. Resources needing an existing order, inspection, advert or feedback identifier are not all live-tested.
 
-The hosted route has also been tested using an ephemeral in-memory OAuth grant bound to the real companion. It discovers 21 tools and the final catalog, returns real listing search/detail data and returns a pending approval plan plus its status without submitting any change. No token or pairing code was written into the repository or validation report.
+Live saved-advert and chat-room responses now omit embedded seller phone fields. Tests through Codex, ChatGPT's connected app, Claude and Grokbot confirm this. Private message text is preserved and can include contact information typed by a seller; metadata redaction is not message-content redaction.
 
-The Mac companion runs as a LaunchAgent with a private socket and browser profile. Its last verified status is signed out. Existing-browser Jiji inspection is not counted as companion authentication.
+## Client evidence
 
-## Client completion is still open
+| Client | Actual verification |
+| --- | --- |
+| Codex | 21 tools and final 73-read/35-action/42-workflow catalog; real search/detail and pending-plan routing; authenticated profile, saved adverts, own adverts and notifications. |
+| ChatGPT | Connected app calls pass live research, catalog/status, expanded-grant account reads, and pending-plan/status checks. Authenticated profile, saved adverts, own adverts, notifications and contact-redaction checks pass. Its web verification chat still displays **“This response couldn’t load”**, including a fresh status-only request. Connector responses work; web response rendering remains unresolved. |
+| Claude | Actual verification chat passes signed-in status and profile, saved adverts, own adverts, notifications and chat lists. A separate fresh check confirms saved-advert/chat-room contact fields are omitted. Earlier research and listing-detail checks passed. |
+| Grokbot | Supported built-in custom connector tool registered Jiji; OAuth pairing completed and the native card shows **Connected · 1 Account**. Its actual Jiji bot discovered 21 tools and passed nine checks: capabilities, signed-in status, search, listing details and five account reads. It confirmed the metadata redaction and that it will use this connector for future Jiji work. |
 
-- Codex: configured and live research/catalog/preparation calls verified. Authenticated account checks remain pending sign-in.
-- ChatGPT: all 21 app tools are available. Live capability/status, expanded-grant search-suggestion reads, and prepare/status calls succeeded through the connected app. Search/detail calls also succeeded. The web verification chat currently displays “This response couldn’t load,” including after reload; that display issue is separate from the verified MCP responses.
-- Claude: OAuth and all 21 tools are verified. The saved verification chat passed capability, search and first-listing detail calls. Its initial status call timed out; a standalone retry succeeded and reported the browser/relay connected with Jiji signed out. No seller contact or mutation was exercised.
-- Grokbot: native installation/test remains pending. After unlock, its UI is readable but connector controls return invalid-element/frontmost-application errors. The import configuration is prepared; the personal setup window needs to be active to continue.
+The final hosted deployment `efcb874d-e6e9-415f-81b0-efd2e843952e` passed live OAuth/PKCE, isolation and routing fixtures. An ephemeral in-memory grant bound to the real companion also verified research and pending approval/status routing. Pairing codes and tokens are not recorded here.
 
-The remaining browser setup and test pages were preserved. The user has unlocked the Mac. Grokbot native control is still blocked by window/focus errors, and Jiji sign-in is still required to finish authenticated inbox/saved/account tests and verify all four clients.
+## Verification limits
 
-No live test sends a seller message or native offer, publishes/deletes an advert, files feedback/reports, pays, changes credentials or permanently deletes data. Fixtures are not evidence that those real effects have been exercised. Browser owner handoffs in FEATURES.md are not claims of full automation.
+No live test sends a seller message or native offer, publishes/deletes an advert, files feedback/reports, pays, changes credentials, uploads identity documents or permanently deletes data. Fixtures do not establish those real effects. The 42 owner workflows are handoffs, not claims of full automation. Account/site-specific feature availability still applies.

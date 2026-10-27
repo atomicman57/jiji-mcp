@@ -29,7 +29,7 @@ The server exposes **21 tools**, including a catalog of **73 read resources**, *
 
 ## Verification boundaries
 
-Automated tests cover schemas/routing, browser-origin restrictions, credential redaction, paid-field rejection, advert create/edit identity, OAuth isolation and expanded consent, local CSRF protections and one-time approvals. Public listing search has been tested through the companion. Authenticated live account checks depend on completing sign-in in its dedicated browser. Existing-browser inspection is not counted as companion authentication.
+Automated tests cover schemas/routing, browser-origin restrictions, credential redaction, paid-field rejection, advert create/edit identity, OAuth isolation and expanded consent, local CSRF protections and one-time approvals. Public research and authenticated account reads have been exercised through the dedicated companion and connected clients. Of 49 read resources accepting empty parameters, 46 succeeded; orders and two advert-sharing resources returned HTTP 404 on the tested account/site. Identifier-dependent reads and real writes are not all live-tested. See VALIDATION.md for client evidence and limits.
 
 No test sends a real seller message, publishes an advert, purchases a package, changes credentials, uploads identity documents or permanently deletes account data. Such effects cannot be called “live-tested” from fixtures alone.
 
