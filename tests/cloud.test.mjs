@@ -207,7 +207,30 @@ test(
           body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
         });
       const list = await (await rpc("tools/list", {})).json();
-      assert.equal(list.result.tools.length, 21);
+      assert.equal(list.result.tools.length, 22);
+      // Reply preparation travels through the relay; the mocked companion only
+      // returns a pending plan. No human approval or Jiji mutation is performed.
+      const reply = rpc("tools/call", {
+        name: "jiji_prepare_conversation_message",
+        arguments: { key: "a".repeat(24), message: "Exact mock reply" },
+      });
+      const replyJob = (await (await nextJobResponse()).json()).jobs[0];
+      assert.equal(replyJob.request.action, "prepare_conversation_message");
+      assert.equal(replyJob.request.message, "Exact mock reply");
+      await browser("/bridge/result", {
+        id: replyJob.id,
+        result: {
+          id: "mock-plan",
+          state: "pending",
+          approval_url: "http://127.0.0.1/approve/mock-plan",
+        },
+      });
+      const replyAnswer = await (await reply).json();
+      assert.equal(replyAnswer.result.isError, undefined);
+      assert.equal(
+        JSON.parse(replyAnswer.result.content[0].text).state,
+        "pending",
+      );
       const poll = nextJobResponse();
       const search = rpc("tools/call", {
         name: "jiji_search",

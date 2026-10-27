@@ -6,21 +6,21 @@ This project is not affiliated with Jiji. Undocumented endpoints and page select
 
 ## Capabilities
 
-| Tools                                                              | Function                                                                                                                           |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `jiji_open_sign_in`, `jiji_connection_status`                      | Extension-free browser login and connection status                                                                                 |
-| `jiji_search`, `jiji_next_page`, `jiji_listing_details`            | Search, filters, authoritative pagination and full listing details                                                                 |
-| `jiji_compare_listings`, `jiji_market_prices`                      | Compare shortlisted sellers and advertised asking prices for buying/resale research                                                |
-| `jiji_seller_contact`, `jiji_whatsapp_handoff`                     | One selected seller's contacts and a WhatsApp handoff package; no automatic outreach                                               |
-| `jiji_list_conversations`, `jiji_read_conversation`                | Your inbox previews and recent conversation messages                                                                               |
-| `jiji_saved_listings`                                              | Read your existing saved listings                                                                                                  |
-| `jiji_prepare_message`, `jiji_message_status`                      | Prepare an exact message/native price offer, review it locally, and check its outcome                                              |
-| `jiji_capabilities`                                                | Discover every mapped resource, action schema and browser workflow                                                                 |
-| `jiji_account_data`                                                | Read profile/business settings, adverts/forms, saved searches, notifications, feedback, orders, statistics and billing information |
-| `jiji_prepare_action`, `jiji_prepare_advert`, `jiji_action_status` | Prepare exact account changes or advert submissions for local approval and inspect their outcomes                                  |
-| `jiji_open_workflow`, `jiji_inspect_workflow`                      | Open mapped Jiji workflows and inspect ordinary forms; sensitive workflows remain owner handoffs                                   |
+| Tools                                                                              | Function                                                                                                                           |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `jiji_open_sign_in`, `jiji_connection_status`                                      | Extension-free browser login and connection status                                                                                 |
+| `jiji_search`, `jiji_next_page`, `jiji_listing_details`                            | Search, filters, authoritative pagination and full listing details                                                                 |
+| `jiji_compare_listings`, `jiji_market_prices`                                      | Compare shortlisted sellers and advertised asking prices for buying/resale research                                                |
+| `jiji_seller_contact`, `jiji_whatsapp_handoff`                                     | One selected seller's contacts and a WhatsApp handoff package; no automatic outreach                                               |
+| `jiji_list_conversations`, `jiji_read_conversation`                                | Your inbox previews and recent conversation messages                                                                               |
+| `jiji_saved_listings`                                                              | Read your existing saved listings                                                                                                  |
+| `jiji_prepare_message`, `jiji_prepare_conversation_message`, `jiji_message_status` | Prepare an exact message/native price offer, review it locally, and check its outcome                                              |
+| `jiji_capabilities`                                                                | Discover every mapped resource, action schema and browser workflow                                                                 |
+| `jiji_account_data`                                                                | Read profile/business settings, adverts/forms, saved searches, notifications, feedback, orders, statistics and billing information |
+| `jiji_prepare_action`, `jiji_prepare_advert`, `jiji_action_status`                 | Prepare exact account changes or advert submissions for local approval and inspect their outcomes                                  |
+| `jiji_open_workflow`, `jiji_inspect_workflow`                                      | Open mapped Jiji workflows and inspect ordinary forms; sensitive workflows remain owner handoffs                                   |
 
-There are 21 MCP tools. There is no MCP send/approve tool. `jiji_prepare_message` returns a local approval page showing the exact seller, listing and message. Only the owner can submit that page. Each plan expires after ten minutes and can be used once. An uncertain result is not retried automatically. Payments, media uploads, identity verification and credential changes are completed directly on Jiji through owner workflows. Account changes use the same local approval boundary.
+There are 22 MCP tools. There is no MCP send/approve tool. `jiji_prepare_message` returns a local approval page showing the exact seller, listing and message. `jiji_prepare_conversation_message` takes an inbox `key` and exact `message` to prepare a reply to that existing conversation through the same approval page. Expired or ambiguous references fail without sending; list conversations again. Only the owner can submit that page. Each plan expires after ten minutes and can be used once. An uncertain result is not retried automatically. Payments, media uploads, identity verification and credential changes are completed directly on Jiji through owner workflows. Account changes use the same local approval boundary.
 
 ## Native category filters
 

@@ -54,20 +54,50 @@ export function listingUrl(raw) {
   if (typeof raw !== "string" || !raw) return null;
   try {
     const u = new URL(raw, "https://jiji.ng");
-    return u.origin === "https://jiji.ng" ? u.origin + u.pathname : null;
+    return u.origin === "https://jiji.ng" && !u.username && !u.password
+      ? u.origin + u.pathname
+      : null;
   } catch {
     return null;
   }
 }
+// Accept only a concrete same-origin chat route; never construct room IDs.
+export function chatUrl(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const u = new URL(raw, "https://jiji.ng");
+    return u.origin === "https://jiji.ng" &&
+      !u.username &&
+      !u.password &&
+      !u.hash &&
+      /^\/profile-messages\/[A-Za-z0-9_-]+\/?$/.test(u.pathname)
+      ? u.pathname.replace(/\/$/, "")
+      : null;
+  } catch {
+    return null;
+  }
+}
+const firstText = (...values) =>
+  values.find((v) => typeof v === "string" && v.trim())?.trim() ?? null;
 export function normalize(ad, seller = {}) {
+  seller ??= {};
+  const embedded = ad.seller ?? {};
   return {
     guid: ad.guid,
     title: ad.title,
     url: listingUrl(ad.url),
     status: ad.status,
-    chat_url: /^\/profile-messages\/[A-Za-z0-9_]+$/.test(ad.message_url || "")
-      ? ad.message_url
-      : null,
+    chat_url:
+      [
+        ad.message_url,
+        ad.chat_url,
+        seller.message_url,
+        seller.chat_url,
+        embedded.message_url,
+        embedded.chat_url,
+      ]
+        .map(chatUrl)
+        .find(Boolean) ?? null,
     price_ngn: ad.price_obj?.value ?? null,
     price_text: ad.price_obj?.view ?? ad.price_title ?? null,
     location:
@@ -89,8 +119,15 @@ export function normalize(ad, seller = {}) {
       .map((a) => (typeof a === "string" ? a : a.url))
       .filter(Boolean),
     seller: {
-      id: seller.id ?? ad.user_id ?? null,
-      name: seller.name ?? ad.seller?.user_name ?? null,
+      id: seller.id ?? embedded.id ?? ad.user_id ?? null,
+      name: firstText(
+        seller.name,
+        seller.user_name,
+        seller.full_name,
+        embedded.name,
+        embedded.user_name,
+        embedded.full_name,
+      ),
       response_time: seller.user_response_time ?? null,
       feedback_count: seller.feedback_count ?? null,
       labels: seller.labels ?? [],

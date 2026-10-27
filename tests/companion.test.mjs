@@ -92,6 +92,12 @@ test("extension-free companion has a private socket and rejects cross-site appro
     );
     assert.equal(plan.state, "pending");
     assert.match(plan.approval_url, /\/approve\//);
+    const review = await (
+      await fetch(plan.approval_url, { headers: { Cookie: cookie } })
+    ).text();
+    assert.match(review, /Message Example seller/);
+    assert.match(review, /Is it still available\?/);
+    assert.match(review, /Approve and send on Jiji/);
     const approve = await fetch(origin + "/api/approve/" + plan.id, {
       method: "POST",
       headers: { Origin: "https://evil.example", Cookie: cookie },

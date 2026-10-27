@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { JijiBrowser } from "./browser-driver.mjs";
 import { ApprovalPlans } from "./plans.mjs";
+import { prepareMessageAction } from "./message-actions.mjs";
 import { loadIdentity } from "./identity.mjs";
 import { socketPath } from "./bridge.mjs";
 import { validatePath } from "./protocol.mjs";
@@ -98,23 +99,10 @@ async function action(m) {
       }),
     );
   }
-  if (m.action === "prepare_message") {
-    const { plan } = m;
-    if (
-      !plan ||
-      !plan.seller ||
-      !plan.listing_url ||
-      typeof plan.message !== "string" ||
-      plan.message.length > 4000 ||
-      !plan.chat_url ||
-      (plan.offer_amount !== undefined &&
-        (!Number.isFinite(plan.offer_amount) ||
-          plan.offer_amount <= 0 ||
-          plan.offer_amount > 1e12))
-    )
-      throw new Error("Message plan is incomplete.");
-    return publicPlan(plans.prepare({ ...plan, type: "jiji_message" }));
-  }
+  if (m.action === "resolve_listing_target")
+    return browser.run(() => browser.resolveListingTarget(m.listing_url));
+  if (["prepare_message", "prepare_conversation_message"].includes(m.action))
+    return publicPlan(await prepareMessageAction(browser, plans, m));
   if (m.action === "plan_status")
     return publicPlan(plans.public(plans.get(m.id)));
   throw new Error("Unsupported companion action.");

@@ -7,6 +7,7 @@ export function registerFeatures(register, request, fetchJSON) {
     const b = await fetchJSON(`/api_web/v1/item/${id}?webp=true`);
     if (!b.advert?.guid)
       throw new Error("Listing unavailable or response changed.");
+    if (b.advert.guid !== id) throw new Error("Listing identity changed.");
     return normalize(b.advert, b.seller);
   };
   const contact = async (id, purpose) => {
@@ -141,8 +142,19 @@ export function registerFeatures(register, request, fetchJSON) {
     },
     async ({ guid, message, offer_amount }) => {
       const listing = await detail(guid);
-      if (!listing.seller.name || !listing.chat_url || !listing.url)
-        throw new Error("Listing has no verified chat target or seller name.");
+      if (!listing.url) throw new Error("Listing has no verified listing URL.");
+      if (!listing.seller.name || !listing.chat_url) {
+        const target = await request({
+          action: "resolve_listing_target",
+          listing_url: listing.url,
+        });
+        listing.chat_url ??= target.chat_url;
+        listing.seller.name ??= target.seller;
+      }
+      if (!listing.seller.name || !listing.chat_url)
+        throw new Error(
+          "Listing has no verified chat target or seller name. Open it on Jiji to check availability and sign-in.",
+        );
       return request({
         action: "prepare_message",
         plan: {
@@ -159,6 +171,26 @@ export function registerFeatures(register, request, fetchJSON) {
         },
       });
     },
+    {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  );
+  register(
+    "jiji_prepare_conversation_message",
+    "Prepare an exact text reply to an existing conversation key returned by jiji_list_conversations. Sends nothing. Returns the same local human approval page as jiji_prepare_message; only the owner can approve and send once.",
+    {
+      key: z.string().regex(/^[a-f0-9]{24}$/),
+      message: z
+        .string()
+        .min(1)
+        .max(4000)
+        .refine((text) => text.trim().length > 0, "Message cannot be blank"),
+    },
+    ({ key, message }) =>
+      request({ action: "prepare_conversation_message", key, message }),
     {
       readOnlyHint: false,
       destructiveHint: false,

@@ -189,6 +189,7 @@ test("native offers require the approved listing and a confirmed Jiji response",
   let matching = false,
     calls = 0;
   browser.go = async () => ({
+    url: () => "https://jiji.ng/profile-messages/7_12",
     locator: (selector) =>
       selector.startsWith("a[")
         ? {

@@ -2,7 +2,7 @@
 
 Audited on 2026-10-27 against Jiji’s live web interface, public application route/API definitions and [help centre](https://jiji.ng/faq). This is an independent integration of the web product; undocumented endpoints can change and account, category, country or subscription restrictions still apply.
 
-The server exposes **21 tools**, including a catalog of **73 read resources**, **35 owner-approved actions**, and **42 browser workflows**. [FEATURES.json](FEATURES.json) contains exact names and parameter schemas. `jiji_capabilities` provides the same inventory to agents.
+The server exposes **22 tools**, including a catalog of **73 read resources**, **35 owner-approved actions**, and **42 browser workflows**. [FEATURES.json](FEATURES.json) contains exact names and parameter schemas. `jiji_capabilities` provides the same inventory to agents.
 
 “Direct read” means an implemented, fixed browser-origin request or rendered-page reader. “Prepare” means an exact local approval plan; preparation never submits the change. “Owner workflow” opens the relevant Jiji page for manual final steps. These are distinct levels of support. A mapped endpoint is not evidence that it has been exercised successfully on every account.
 
