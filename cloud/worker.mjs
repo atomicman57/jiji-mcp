@@ -1,3 +1,4 @@
+import { withD1Storage, cleanupD1Storage } from "./d1-kv.mjs";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createServer } from "../src/tools.mjs";
@@ -165,7 +166,11 @@ const defaultHandler = {
   },
 };
 export default {
+  scheduled(event, env, ctx) {
+    ctx.waitUntil(cleanupD1Storage(env));
+  },
   async fetch(req, env, ctx) {
+    env = withD1Storage(env);
     const origin = env.PUBLIC_ORIGIN || new URL(req.url).origin;
     if (env.PUBLIC_ORIGIN && new URL(req.url).origin !== origin)
       return json({ error: "Host rejected" }, 403);

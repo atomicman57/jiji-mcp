@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS kv_entries (
+  key TEXT PRIMARY KEY COLLATE BINARY,
+  value TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT 'null',
+  expires_at INTEGER,
+  deleted INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS kv_expiry ON kv_entries(expires_at) WHERE expires_at IS NOT NULL;

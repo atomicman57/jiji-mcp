@@ -1,10 +1,10 @@
 # Validation — version 0.3.1
 
-Verified on 2026-10-27. The platform baseline is `f4b7755`; `f119ec6` adds closed-tab recovery. The latest local companion also removes embedded seller contact fields from account research while preserving owner profile contacts. Version 0.3.1 adds shared native-filter inputs for listing search and market-price samples; OAuth and approval behavior are unchanged.
+Verified on 2026-10-27. The platform baseline is `f4b7755`; `f119ec6` adds closed-tab recovery. The latest local companion also removes embedded seller contact fields from account research while preserving owner profile contacts. Version 0.3.1 adds shared native-filter inputs for listing search and market-price samples. Persistent OAuth storage has also migrated from KV to D1; approval boundaries and existing grants are preserved.
 
 ## Automated checks
 
-All **22 tests pass** after the browser lifecycle and contact-redaction fixes. They cover tool discovery, research/pagination, catalog schemas, credential and contact redaction inside the browser, owner profile preservation, advert identity, native-offer target validation, saved-search routing, one-time/concurrent/expired approvals, uncertain outcomes without retry, private socket/CSRF protections, and cloud OAuth/PKCE, isolation and expanded consent. `git diff --check` passes. Cloud build and dependency audit passed for the platform baseline; no dependency or Worker code changed in these local fixes.
+All **23 tests pass** after the browser lifecycle and contact-redaction fixes. They cover tool discovery, research/pagination, catalog schemas, credential and contact redaction inside the browser, owner profile preservation, advert identity, native-offer target validation, saved-search routing, one-time/concurrent/expired approvals, uncertain outcomes without retry, private socket/CSRF protections, and cloud OAuth/PKCE, isolation and expanded consent. `git diff --check` passes. Cloud build and dependency audit passed for the platform baseline; no dependency or Worker code changed in these local fixes.
 
 ## Authenticated live checks
 
@@ -36,3 +36,9 @@ No live test sends a seller message or native offer, publishes/deletes an advert
 A real uncategorized attribute-filter request was found to be silently ignored by Jiji. The implementation now requires `category_slug` with attribute filters. Fixed same-origin listing requests support the web client's category/region slugs and bounded native attribute keys, without allowing arbitrary URL parameters.
 
 Live category-scoped 450 W solar-panel checks returned 8/8 Used listings and a price sample of 15/15 Used listings; Brand New checks returned 8/8 on the first page, 8/8 on the next page and 17/17 in the price sample. A multi-select Used/Refurbished search returned 20 results, all with a permitted condition. These are observed public asking-price listings, not completed-sales data. Tests verify forwarding, URL escaping, filtered pagination and rejection of unscoped/unsupported filters.
+
+## D1 deployment verification
+
+The central migration removed the live KV binding and populated the existing D1 database while retaining the bridge Durable Objects. A fresh hosted OAuth/PKCE grant now passes discovery of all 21 tools, the final catalog, real Used/Brand New filtered searches, signed-in status, public search/detail, private account reads and pending-plan/status routing without submission. An earlier pairing attempt failed during the KV-era transition and was not counted as passed.
+
+A dedicated D1 persistence test exercises binary/Unicode/JSON data, metadata, expired-record exclusion, paginated prefix listing, deletion and migration tombstones preventing revoked credentials from reappearing. Deployment tooling preserves the existing D1/bridge bindings and no longer provisions KV. D1 and Worker/DO free-plan quotas remain applicable; no paid plan change was made by this migration.

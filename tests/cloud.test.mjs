@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
@@ -22,13 +23,23 @@ test(
               "nodejs_compat",
               "global_fetch_strictly_public",
             ],
-            kvNamespaces: ["OAUTH_KV"],
+            d1Databases: ["MCP_STORAGE"],
             durableObjects: {
               BRIDGES: { className: "JijiBridge", useSQLite: true },
             },
           }),
         );
     try {
+      if (mf) {
+        const db = (await mf.getBindings()).MCP_STORAGE;
+        for (const sql of readFileSync(
+          new URL("../cloud/d1-schema.sql", import.meta.url),
+          "utf8",
+        )
+          .split(";")
+          .filter((s) => s.trim()))
+          await db.prepare(sql).run();
+      }
       const dispatch = (path, init = {}) =>
         mf
           ? mf.dispatchFetch(base + path, init)

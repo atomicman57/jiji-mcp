@@ -100,16 +100,16 @@ The optional credential-helper CLI reads/writes a document named `jiji-mcp-compa
 
 ```sh
 npx wrangler login
-npx wrangler kv namespace create OAUTH_KV
+npx wrangler d1 create jiji-browser-mcp-storage
 ```
 
-Copy `wrangler.jsonc` to `wrangler.local.jsonc`, replace its KV namespace ID, then run:
+Copy `wrangler.jsonc` to `wrangler.local.jsonc`, replace its D1 database ID and initialize it with `npx wrangler d1 execute MCP_STORAGE --remote --config wrangler.local.jsonc --file cloud/d1-schema.sql`, then run:
 
 ```sh
 npx wrangler deploy --config wrangler.local.jsonc --durable-objects-code-update-mode immediate
 ```
 
-The Worker uses Cloudflare KV and per-user Durable Objects, plus `@cloudflare/workers-oauth-provider`. Configure `PUBLIC_ORIGIN` for a custom domain. Active companions maintain long polls; hosting usage costs and limits apply to the operator. Never commit credentials, browser profiles or personal deployment configuration.
+The Worker uses Cloudflare D1 and per-user Durable Objects, plus `@cloudflare/workers-oauth-provider`. Configure `PUBLIC_ORIGIN` for a custom domain. Active companions maintain long polls; hosting usage costs and limits apply to the operator. Never commit credentials, browser profiles or personal deployment configuration.
 
 ## Development and tests
 
