@@ -40,6 +40,25 @@ test("extension-free companion has a private socket and rejects cross-site appro
     const status = await bridgeRequest({ action: "status" }, socket);
     assert.equal(status.extension_required, false);
     assert.equal(status.browser_open, false);
+    const accountPlan = await bridgeRequest(
+      {
+        action: "prepare_action",
+        operation: "save_search",
+        parameters: { search_params: { query: "example router" } },
+        purpose: "Verify local approval preparation only",
+      },
+      socket,
+    );
+    assert.equal(accountPlan.state, "pending");
+    assert.equal(accountPlan.operation, "save_search");
+    assert.equal(
+      (await bridgeRequest({ action: "status" }, socket)).browser_open,
+      false,
+    );
+    await assert.rejects(
+      bridgeRequest({ action: "approve", id: accountPlan.id }, socket),
+      /Unsupported/,
+    );
     const origin = "http://127.0.0.1:" + port;
     const page = await fetch(origin);
     const cookie = page.headers.get("set-cookie").split(";")[0];

@@ -19,7 +19,7 @@ const advert = {
   price_obj: { value: 20 },
   user_id: 7,
 };
-test("rejects cross-origin, contacts, and unsupported paths", () => {
+test("rejects cross-origin and unsupported paths", () => {
   for (const url of [
     "https://evil.test/api_web/v1/listing",
     "//evil.test/api_web/v1/listing",
@@ -67,7 +67,7 @@ test("MCP lists tools, paginates with authoritative URL, and reads details", asy
     };
   });
   try {
-    assert.equal((await x.client.listTools()).tools.length, 14);
+    assert.equal((await x.client.listTools()).tools.length, 21);
     const call = async (name, args) =>
       JSON.parse(
         (await x.client.callTool({ name, arguments: args })).content[0].text,

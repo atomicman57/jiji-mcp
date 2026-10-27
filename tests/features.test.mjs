@@ -66,7 +66,7 @@ test("seller research, contacts, inbox and message preparation route without sen
   };
   try {
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 14);
+    assert.equal(tools.length, 21);
     assert.ok(!tools.some((t) => /approve|send_message/.test(t.name)));
     assert.equal(
       (await call("jiji_market_prices", { query: "router" })).median,
@@ -102,6 +102,13 @@ test("seller research, contacts, inbox and message preparation route without sen
     const draft = await call("jiji_prepare_message", { guid: advert.guid });
     assert.equal(draft.state, "pending");
     assert.match(draft.message, /Is it still available/);
+    const offer = await call("jiji_prepare_message", {
+      guid: advert.guid,
+      offer_amount: 90,
+    });
+    assert.equal(offer.state, "pending");
+    assert.equal(offer.offer_amount, 90);
+    assert.equal(offer.message, "");
     assert.ok(!seen.some((m) => /send|approve/.test(m.action)));
   } finally {
     await client.close();

@@ -1,0 +1,2435 @@
+{
+  "audited_at": "2026-10-27",
+  "read_resources": [
+    {
+      "name": "search_suggestions",
+      "title": "Search suggestions",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "term": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "slug": {
+            "type": "string",
+            "maxLength": 150
+          }
+        },
+        "required": [
+          "term"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "listing_filters",
+      "title": "Category and region filter definitions",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "maxLength": 150
+          },
+          "region_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "top_searches",
+      "title": "Popular searches",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "size": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "recent_searches",
+      "title": "Your recent searches",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "recently_viewed",
+      "title": "Your recently viewed adverts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "navigation",
+      "title": "Account navigation",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "personal_details",
+      "title": "Personal details",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "business_details",
+      "title": "Business profile",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "stores",
+      "title": "Store locations and opening hours",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "store_form",
+      "title": "Store form",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "deliveries",
+      "title": "Business delivery options",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delivery_form",
+      "title": "Business delivery form",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "my_adverts",
+      "title": "Your adverts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "status": {
+            "type": "string",
+            "maxLength": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "saved_adverts",
+      "title": "Saved adverts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "size": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "saved_searches",
+      "title": "Saved searches",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "size": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "notifications",
+      "title": "Notifications",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "notification_settings",
+      "title": "Notification settings",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "chat_settings",
+      "title": "Chat settings",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "contact_settings",
+      "title": "Contact visibility settings",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_settings",
+      "title": "Feedback settings",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "whatsapp_settings",
+      "title": "Business WhatsApp settings",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "balance",
+      "title": "Balance and active packages",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "transactions",
+      "title": "Transaction history",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "type": {
+            "type": "string",
+            "maxLength": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "latest_transactions",
+      "title": "Recent transactions",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "sent_feedback",
+      "title": "Feedback you submitted",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_suggestions",
+      "title": "Items eligible for feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "appealed_feedback",
+      "title": "Appealed feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "followers",
+      "title": "Your followers",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "following",
+      "title": "Sellers you follow",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "orders",
+      "title": "Safe Deal orders",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "sold",
+              "bought"
+            ]
+          },
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "order",
+      "title": "Safe Deal order and tracking",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "order_checkout",
+      "title": "Safe Deal checkout details",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "order_cancellation",
+      "title": "Safe Deal buyer cancellation options",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_order_cancellation",
+      "title": "Safe Deal seller cancellation options",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "inspections",
+      "title": "Your vehicle inspections",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "inspection",
+      "title": "Inspection details",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "advert_delete_reasons",
+      "title": "Advert close/delete reasons",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "advert_publish_check",
+      "title": "Advert publication requirements",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "advert_edit_form",
+      "title": "Edit advert form",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "advert_create_form",
+      "title": "New advert form",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "advert_category_fields",
+      "title": "Category-specific advert fields",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "advert_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "category_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "advert_id",
+          "category_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_recommendations",
+      "title": "Seller recommendations",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_attribute_stats",
+      "title": "Advert quality recommendations",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_price_recommendations",
+      "title": "Advert price recommendations",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unanswered_chats",
+      "title": "Unanswered seller chats",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "client_stats",
+      "title": "Inbound client statistics",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "premium_categories",
+      "title": "Promotion categories",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "premium_packages",
+      "title": "Promotion package information",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "category"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "chat_stickers",
+      "title": "Available chat stickers",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unread_messages",
+      "title": "Unread message count",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "chat_rooms",
+      "title": "Jiji chat rooms",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sort": {
+            "type": "string",
+            "maxLength": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "chat_messages",
+      "title": "Chat history including media references",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "last_msg_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "next",
+              "prev"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "chat_search",
+      "title": "Search your Jiji conversations",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "group": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_feedback",
+      "title": "Seller feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9]{8,64}$"
+          },
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "size": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 20
+          },
+          "rating": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 5
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_create_form",
+      "title": "New feedback form",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_edit_form",
+      "title": "Edit feedback form",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "similar_adverts",
+      "title": "Related adverts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "report_form",
+      "title": "Advert report reasons",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "category_help",
+      "title": "Category posting guidance",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "category_counts",
+      "title": "Category listing counts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_profile",
+      "title": "Public seller profile",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_shop",
+      "title": "Public seller shop",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "seller_categories",
+      "title": "Seller top categories",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          }
+        },
+        "required": [
+          "guid"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "social_connection_status",
+      "title": "Connected sign-in providers (status only)",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "business_verification_status",
+      "title": "Business verification status",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ad_sharing_pages",
+      "title": "Available advert-sharing pages",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ad_sharing_active",
+      "title": "Active advert-sharing pages",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "pro_sales_overview",
+      "title": "Pro Sales campaign overview",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "pro_sales_groups",
+      "title": "Pro Sales bid groups",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "size": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 30
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "pro_sales_group",
+      "title": "Pro Sales group details",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "discounts",
+      "title": "Your advert discounts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "job_applications",
+      "title": "Applications to your job advert",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "advert_statistics",
+      "title": "Your advert statistics",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  ],
+  "owner_approved_actions": [
+    {
+      "name": "save_search",
+      "title": "Save a search and subscribe to its alerts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "search_params": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "search_params"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unsubscribe_search",
+      "title": "Unsubscribe from saved-search alerts",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "clear_recent_searches",
+      "title": "Clear your recent-search history",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "clear_recently_viewed",
+      "title": "Clear your recently viewed history",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "save_advert",
+      "title": "Save advert",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unsave_advert",
+      "title": "Remove saved advert",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "remove_saved_search",
+      "title": "Delete saved search",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "follow_seller",
+      "title": "Follow seller",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unfollow_seller",
+      "title": "Unfollow seller",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mark_notifications",
+      "title": "Change notification read status",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ids": {
+            "minItems": 1,
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                }
+              ]
+            }
+          },
+          "read": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ids",
+          "read"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_personal_details",
+      "title": "Update personal details",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_business",
+      "title": "Update business profile",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_store",
+      "title": "Create or update store",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_store",
+      "title": "Delete store",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_delivery",
+      "title": "Create or update business delivery option",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_delivery",
+      "title": "Delete business delivery option",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_notifications",
+      "title": "Update notification preferences",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "settings": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "settings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_chat_enabled",
+      "title": "Enable or disable Jiji chats",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_contacts_enabled",
+      "title": "Change contact visibility",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_feedback_enabled",
+      "title": "Enable or disable feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_whatsapp",
+      "title": "Update business WhatsApp settings",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "settings": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "settings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_ad_sharing",
+      "title": "Update automatic advert sharing",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "settings": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "settings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "reactivate_advert",
+      "title": "Reactivate advert",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "close_advert",
+      "title": "Close advert / mark unavailable",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "reason": {}
+        },
+        "required": [
+          "id",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_advert",
+      "title": "Permanently delete advert",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "reason": {}
+        },
+        "required": [
+          "id",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "publish_advert",
+      "title": "Publish an existing advert draft",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_create",
+      "title": "Submit seller feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "guid": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{8,80}$"
+          },
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "guid",
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_edit",
+      "title": "Edit your feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_react",
+      "title": "React to feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_reply",
+      "title": "Reply to feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "reply_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "image_ids": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "feedback_appeal",
+      "title": "Appeal feedback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "report_advert",
+      "title": "Report an advert",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "request_callback",
+      "title": "Request a seller callback",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          },
+          "details": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "details"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_chat_message",
+      "title": "Delete a chat message",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,80}$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_chat_status",
+      "title": "Change chat status / block or spam handling",
+      "parameters": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "room_ids": {
+            "minItems": 1,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,80}$"
+                }
+              ]
+            }
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "room_ids",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "name": "sign_in",
+      "title": "Jiji sign-in and social login",
+      "path": "/login.html",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "register",
+      "title": "Create a Jiji account using the site registration controls",
+      "path": "/",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "profile",
+      "title": "Your profile",
+      "path": "/profile",
+      "mode": "owner_review"
+    },
+    {
+      "name": "personal_settings",
+      "title": "Personal details",
+      "path": "/profile/settings/contact-details",
+      "mode": "owner_review"
+    },
+    {
+      "name": "business",
+      "title": "Business name, description and links",
+      "path": "/profile/settings/company-about",
+      "mode": "owner_review"
+    },
+    {
+      "name": "stores",
+      "title": "Store addresses, hours and photos",
+      "path": "/profile/settings/stores",
+      "mode": "owner_review"
+    },
+    {
+      "name": "delivery",
+      "title": "Business delivery and Safe Deal setup",
+      "path": "/profile/settings/delivery",
+      "mode": "owner_review"
+    },
+    {
+      "name": "adverts",
+      "title": "Manage adverts: edit, renew, close, mark sold, delete",
+      "path": "/profile/adverts",
+      "mode": "owner_review"
+    },
+    {
+      "name": "post_ad",
+      "title": "Create an advert, select category, upload photos/video",
+      "path": "/add-free-ad.html",
+      "mode": "owner_review"
+    },
+    {
+      "name": "favorites",
+      "title": "Saved adverts",
+      "path": "/profile/saved/favorites",
+      "mode": "owner_review"
+    },
+    {
+      "name": "searches",
+      "title": "Saved searches and alerts",
+      "path": "/profile/saved/searches",
+      "mode": "owner_review"
+    },
+    {
+      "name": "messages",
+      "title": "Chats, media, offers, block/spam and message management",
+      "path": "/profile-messages",
+      "mode": "owner_review"
+    },
+    {
+      "name": "feedback",
+      "title": "Feedback, replies, reactions and appeals",
+      "path": "/profile/feedback",
+      "mode": "owner_review"
+    },
+    {
+      "name": "followers",
+      "title": "Your followers",
+      "path": "/profile/followers",
+      "mode": "owner_review"
+    },
+    {
+      "name": "following",
+      "title": "Sellers you follow",
+      "path": "/profile/following",
+      "mode": "owner_review"
+    },
+    {
+      "name": "notifications",
+      "title": "Notifications",
+      "path": "/profile/notifications",
+      "mode": "owner_review"
+    },
+    {
+      "name": "notification_settings",
+      "title": "Notification preferences",
+      "path": "/profile/settings/notification",
+      "mode": "owner_review"
+    },
+    {
+      "name": "language",
+      "title": "Interface language",
+      "path": "/profile/settings/language",
+      "mode": "owner_review"
+    },
+    {
+      "name": "chat_settings",
+      "title": "Chat and contact preferences",
+      "path": "/profile/settings/contact-channels",
+      "mode": "owner_review"
+    },
+    {
+      "name": "feedback_settings",
+      "title": "Feedback preferences",
+      "path": "/profile/settings/feedback",
+      "mode": "owner_review"
+    },
+    {
+      "name": "whatsapp",
+      "title": "Business WhatsApp settings",
+      "path": "/profile/settings/whatsapp",
+      "mode": "owner_review"
+    },
+    {
+      "name": "ad_sharing",
+      "title": "Automatic advert sharing",
+      "path": "/profile/settings/auto-publisher",
+      "mode": "owner_review"
+    },
+    {
+      "name": "statistics",
+      "title": "Advert statistics",
+      "path": "/profile/statistics",
+      "mode": "owner_review"
+    },
+    {
+      "name": "clients",
+      "title": "Inbound clients and follow-up dashboard",
+      "path": "/profile/my-clients",
+      "mode": "owner_review"
+    },
+    {
+      "name": "orders",
+      "title": "Safe Deal orders, checkout, tracking, disputes and refunds",
+      "path": "/profile/orders",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "premium",
+      "title": "Premium packages, Top Ads and Boost",
+      "path": "/sc/premium-services",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "pro_sales",
+      "title": "Pro Sales campaigns, budgets and bids",
+      "path": "/profile/pro_sales",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "pro_sales_bids",
+      "title": "Pro Sales bid groups",
+      "path": "/profile/pro_sales_v3/bids",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "balance",
+      "title": "Balance, top-up, credit and payment methods",
+      "path": "/sc/my-balance",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "transactions",
+      "title": "Transaction history and invoices",
+      "path": "/profile/transactions",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "inspections",
+      "title": "Vehicle inspection bookings",
+      "path": "/profile/inspections",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "auction",
+      "title": "Cars45 selling and auctions",
+      "path": "/auction-for-sellers",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "price_statistics",
+      "title": "Marketplace price statistics",
+      "path": "/price-statistics",
+      "mode": "owner_review"
+    },
+    {
+      "name": "recently_viewed",
+      "title": "Recently viewed listings",
+      "path": "/recently-viewed",
+      "mode": "owner_review"
+    },
+    {
+      "name": "jobs",
+      "title": "Job search, applications and CVs",
+      "path": "/jobs",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "identity",
+      "title": "ID and business verification",
+      "path": "/profile/kyc/id_verify",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "phone",
+      "title": "Change account phone",
+      "path": "/profile/settings/phone",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "email",
+      "title": "Change account email",
+      "path": "/profile/settings/email",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "password",
+      "title": "Change account password",
+      "path": "/profile/settings/change-password",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "security",
+      "title": "Account security and passkeys",
+      "path": "/profile/settings/security",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "delete_account",
+      "title": "Permanent account deletion",
+      "path": "/profile/settings/delete",
+      "mode": "owner_handoff"
+    },
+    {
+      "name": "support",
+      "title": "Jiji help, refunds, reports and support",
+      "path": "/faq",
+      "mode": "owner_handoff"
+    }
+  ],
+  "verification": "Catalog entries are mapped to the current web client. Availability is account-dependent; executable writes require local owner approval and are not all live-tested.",
+  "sources": [
+    "https://jiji.ng/faq",
+    "https://jiji.ng/faq/app-vs-website"
+  ]
+}

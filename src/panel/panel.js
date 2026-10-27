@@ -19,7 +19,7 @@ for (const form of document.forms)
         data.message ||
         data.result?.message ||
         (data.state
-          ? "Message status: " + data.state
+          ? "Action status: " + data.state
           : data.opened
             ? "Jiji is open. Complete sign-in there."
             : data.code

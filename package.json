@@ -1,7 +1,7 @@
 {
   "name": "jiji-browser-mcp",
-  "version": "0.2.0",
-  "description": "Extension-free Jiji MCP with browser login, seller research and locally approved chat",
+  "version": "0.3.0",
+  "description": "Extension-free Jiji MCP with browser login, marketplace research and locally approved account actions",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -14,6 +14,7 @@
     "cloud:build": "wrangler deploy --dry-run --outdir work/cloud-build",
     "cloud:deploy": "wrangler deploy",
     "companion": "node src/companion.mjs",
+    "catalog:write": "node scripts/catalog.mjs",
     "install:companion": "node scripts/install.mjs"
   },
   "dependencies": {

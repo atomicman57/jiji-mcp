@@ -140,9 +140,13 @@ export function registerFeatures(register, request, fetchJSON) {
   );
   register(
     "jiji_prepare_message",
-    "Prepare an exact seller message for local owner review. Never sends a message by itself. The owner must review the seller, listing and exact text on the companion approval page; there is no agent-callable send/approve tool.",
-    { guid, message: z.string().min(1).max(4000).optional() },
-    async ({ guid, message }) => {
+    "Prepare an exact seller message or native price offer for local owner review. Never sends by itself. The owner reviews the seller, listing, exact text and any offer amount on the companion approval page; there is no agent-callable send/approve tool. Media uploads remain in the owner’s Jiji browser.",
+    {
+      guid,
+      message: z.string().min(1).max(4000).optional(),
+      offer_amount: z.number().positive().max(1e12).optional(),
+    },
+    async ({ guid, message, offer_amount }) => {
       const listing = await detail(guid);
       if (!listing.seller.name || !listing.chat_url || !listing.url)
         throw new Error("Listing has no verified chat target or seller name.");
@@ -153,9 +157,12 @@ export function registerFeatures(register, request, fetchJSON) {
           title: listing.title,
           listing_url: listing.url,
           chat_url: listing.chat_url,
+          ...(offer_amount === undefined ? {} : { offer_amount }),
           message:
-            message ||
-            `${listing.url}\n\nIs it still available? If yes, how much is it, and when can you deliver?`,
+            message ??
+            (offer_amount === undefined
+              ? `${listing.url}\n\nIs it still available? If yes, how much is it, and when can you deliver?`
+              : ""),
         },
       });
     },

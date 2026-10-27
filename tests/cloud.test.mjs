@@ -99,7 +99,7 @@ test("cloud OAuth pairing, PKCE, isolation, and browser routing", async () => {
       }),
     });
     assert.equal(tokenResponse.status, 200);
-    const tokens = await tokenResponse.json();
+    let tokens = await tokenResponse.json();
     assert.ok(tokens.access_token);
     const rpc = (method, params, id = 1) =>
       dispatch("/mcp", {
@@ -112,7 +112,7 @@ test("cloud OAuth pairing, PKCE, isolation, and browser routing", async () => {
         body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
       });
     const list = await (await rpc("tools/list", {})).json();
-    assert.equal(list.result.tools.length, 14);
+    assert.equal(list.result.tools.length, 21);
     const poll = browser("/bridge/poll");
     const search = rpc("tools/call", {
       name: "jiji_search",
@@ -148,6 +148,97 @@ test("cloud OAuth pairing, PKCE, isolation, and browser routing", async () => {
     assert.equal(delivered.status, 200);
     const answer = await (await search).json();
     assert.match(answer.result.content[0].text, /Test router/);
+    // Older grants cannot gain private account access through a client header.
+    const denied = await dispatch("/mcp", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + tokens.access_token,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "X-Jiji-Account-Access": "1",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "jiji_account_data",
+          arguments: { resource: "balance" },
+        },
+      }),
+    });
+    const deniedBody = await denied.json();
+    assert.equal(deniedBody.result.isError, true);
+    assert.match(deniedBody.result.content[0].text, /not been granted/);
+    // Reconnect and explicitly opt in to the expanded account features.
+    const secondPair = await (await browser("/bridge/pair")).json();
+    const secondPage = await dispatch("/authorize?" + authQuery);
+    const secondHtml = await secondPage.text();
+    assert.match(secondHtml, /name="account_access"/);
+    const secondApprove = await dispatch("/authorize", {
+      method: "POST",
+      headers: {
+        Origin: base,
+        Cookie: secondPage.headers.get("set-cookie").split(";")[0],
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        handle: secondHtml.match(/name="handle" value="([^"]+)"/)[1],
+        code: secondPair.code,
+        decision: "approve",
+        account_access: "yes",
+      }),
+    });
+    const secondCallback = (await secondApprove.text())
+      .match(/href="([^"]+)"/)[1]
+      .replaceAll("&#38;", "&");
+    const secondTokens = await dispatch("/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: client.client_id,
+        code: new URL(secondCallback).searchParams.get("code"),
+        redirect_uri: "https://client.example/callback",
+        code_verifier: verifier,
+        resource: base,
+      }),
+    });
+    assert.equal(secondTokens.status, 200);
+    tokens = await secondTokens.json();
+    const accountPoll = browser("/bridge/poll");
+    const accountCall = rpc("tools/call", {
+      name: "jiji_account_data",
+      arguments: { resource: "balance" },
+    });
+    const accountJob = (await (await accountPoll).json()).jobs[0];
+    assert.equal(accountJob.request.resource, "balance");
+    await browser("/bridge/result", {
+      id: accountJob.id,
+      result: { status: 200, body: { balance: 123 } },
+    });
+    assert.match(
+      (await (await accountCall).json()).result.content[0].text,
+      /123/,
+    );
+    // Approval IDs and transport IDs must never overwrite each other.
+    const planId = "11111111-1111-4111-8111-111111111111";
+    const planPoll = browser("/bridge/poll");
+    const planCall = rpc("tools/call", {
+      name: "jiji_action_status",
+      arguments: { id: planId },
+    });
+    const planJob = (await (await planPoll).json()).jobs[0];
+    assert.notEqual(planJob.id, planId);
+    assert.equal(planJob.request.id, planId);
+    await browser("/bridge/result", {
+      id: planJob.id,
+      result: { id: planId, state: "pending" },
+    });
+    assert.match(
+      (await (await planCall).json()).result.content[0].text,
+      new RegExp(planId),
+    );
     const replay = await dispatch("/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

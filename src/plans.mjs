@@ -26,9 +26,13 @@ export class ApprovalPlans {
       title: p.title,
       listing_url: p.listing_url,
       message: p.message,
+      offer_amount: p.offer_amount,
       state: p.state,
       expires_at: new Date(p.expires).toISOString(),
       result: p.result,
+      operation: p.operation,
+      parameters: p.parameters,
+      purpose: p.purpose,
     };
   }
   get(id) {
@@ -49,14 +53,14 @@ export class ApprovalPlans {
     p.state = "executing";
     try {
       p.result = await send(p);
-      p.state = "sent";
+      p.state = p.type === "jiji_message" ? "sent" : "submitted";
       return this.public(p);
     } catch (e) {
       p.state = "uncertain";
       p.result = {
         error: e.message,
         message:
-          "No automatic retry. Check the conversation before preparing another message.",
+          "No automatic retry. Check the result on Jiji before preparing another action.",
       };
       return this.public(p);
     }

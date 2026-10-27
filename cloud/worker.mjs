@@ -54,7 +54,7 @@ async function authorize(req, env) {
     if (auth.scope.some((s) => !["jiji:read", "offline_access"].includes(s)))
       return json({ error: "Unsupported permission" }, 400);
     return html(
-      `<h1>Connect Jiji to your agent</h1><p><strong>${escape(info.clientName)}</strong> wants to use your Jiji companion for listing research, selected seller contacts and your private Jiji conversations.</p><p>Return address: ${escape(info.redirectHost)}. The client name may be self-registered.</p><p>Open the Jiji MCP companion and choose <strong>Pair an agent</strong>. Enter its one-time pairing code below. Only continue if you started this connection.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label>Pairing code<input name="code" autocomplete="off" spellcheck="false" required maxlength="32"></label><p>Allows listing research, selected seller contacts, private chat reading and message drafts. Your Jiji password, cookies and verification codes stay in your companion browser. Messages require separate local approval; payments are not supported.</p><button name="decision" value="approve">Connect agent</button><button name="decision" value="deny" formnovalidate>Cancel</button></form>`,
+      `<h1>Connect Jiji to your agent</h1><p><strong>${escape(info.clientName)}</strong> wants to use your Jiji companion for listing research, selected seller contacts and your private Jiji conversations.</p><p>Return address: ${escape(info.redirectHost)}. The client name may be self-registered.</p><p>Open the Jiji MCP companion and choose <strong>Generate pairing code</strong>. Enter its one-time pairing code below. Only continue if you started this connection.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label>Pairing code<input name="code" autocomplete="off" spellcheck="false" required maxlength="32"></label><p>Allows listing research, selected seller contacts, private chat reading and message drafts. Your Jiji password, cookies and verification codes stay in your companion browser. Messages require separate local approval; payments are completed directly on Jiji.</p><label><input type="checkbox" name="account_access" value="yes"> Also allow account features: profile/business settings, own adverts, notifications, feedback, orders, balance/history and campaign information; prepare changes for local owner approval. This expands private-data access.</label><button name="decision" value="approve">Connect agent</button><button name="decision" value="deny" formnovalidate>Cancel</button></form>`,
       consent.headers,
     );
   }
@@ -96,7 +96,10 @@ async function authorize(req, env) {
     userId: user,
     metadata: { label: "Jiji browser bridge" },
     scope: approved.request.scope,
-    props: { userId: user },
+    props: {
+      userId: user,
+      accountAccess: form.get("account_access") === "yes",
+    },
     revokeExistingGrants: false,
   });
   return html(
@@ -109,7 +112,12 @@ const apiHandler = {
   async fetch(req, env, ctx) {
     if (!ctx.props?.userId || !ctx.auth?.scope?.includes("jiji:read"))
       return json({ error: "Jiji read permission required" }, 403);
-    return stub(env, ctx.props.userId).fetch(req);
+    const headers = new Headers(req.headers);
+    headers.set(
+      "X-Jiji-Account-Access",
+      ctx.props.accountAccess === true ? "1" : "0",
+    );
+    return stub(env, ctx.props.userId).fetch(new Request(req, { headers }));
   },
 };
 const defaultHandler = {
@@ -148,10 +156,10 @@ const defaultHandler = {
         await req.json(),
       );
     }
-    if (u.pathname === "/health") return json({ ok: true, version: "0.2.0" });
+    if (u.pathname === "/health") return json({ ok: true, version: "0.3.0" });
     if (u.pathname === "/")
       return html(
-        '<h1>Jiji MCP</h1><p>Open-source listing search through your own Jiji browser session.</p><p>Start the extension-free companion, sign in on jiji.ng, then connect an MCP agent to <code>/mcp</code>. Use a one-time code from your companion to pair each agent.</p><p>This is an independent project, unaffiliated with Jiji.</p><a href="https://github.com/atomicman57/jiji-mcp">Source and installation</a>',
+        '<h1>Jiji MCP</h1><p>Open-source marketplace and account tools through your own Jiji browser session.</p><p>Start the extension-free companion, sign in on jiji.ng, then connect an MCP agent to <code>/mcp</code>. Use a one-time code from your companion to pair each agent.</p><p>This is an independent project, unaffiliated with Jiji.</p><a href="https://github.com/atomicman57/jiji-mcp">Source and installation</a>',
       );
     return json({ error: "Not found" }, 404);
   },
@@ -206,7 +214,21 @@ export class JijiBridge {
   async fetch(req) {
     const p = new URL(req.url).pathname;
     if (p === "/mcp") {
+      const accountAccess = req.headers.get("X-Jiji-Account-Access") === "1";
       const request = async (m) => {
+        if (
+          [
+            "resource",
+            "workflow",
+            "inspect_workflow",
+            "prepare_action",
+            "prepare_advert",
+          ].includes(m.action) &&
+          !accountAccess
+        )
+          throw new Error(
+            "Account-feature access has not been granted. Reconnect this agent and explicitly enable account features on the consent page. Existing listing/chat access remains available.",
+          );
         if (m.action === "status" && Date.now() - this.lastPoll >= 40000)
           return {
             connected: Date.now() - this.lastPoll < 40000,
@@ -220,6 +242,11 @@ export class JijiBridge {
         if (
           ![
             "status",
+            "resource",
+            "workflow",
+            "inspect_workflow",
+            "prepare_action",
+            "prepare_advert",
             "fetch",
             "inbox",
             "conversation",
@@ -245,7 +272,7 @@ export class JijiBridge {
             );
           }, 25000);
           this.pending.set(id, { resolve, reject, timer });
-          this.jobs.push({ id, ...m });
+          this.jobs.push({ ...m, id, request: m });
           this.flush();
         });
       };
@@ -310,8 +337,10 @@ export class JijiBridge {
       if (!pending) return json({ error: "Expired request" }, 410);
       this.pending.delete(b.id);
       clearTimeout(pending.timer);
-      if (b.error) pending.reject(new Error(String(b.error).slice(0, 500)));
-      else pending.resolve(b);
+      const result = b.result ?? b;
+      if (result.error)
+        pending.reject(new Error(String(result.error).slice(0, 500)));
+      else pending.resolve(result);
       return json({ ok: true });
     }
     if (p === "/disconnect") {

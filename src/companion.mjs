@@ -11,11 +11,13 @@ import { ApprovalPlans } from "./plans.mjs";
 import { loadIdentity } from "./identity.mjs";
 import { socketPath } from "./bridge.mjs";
 import { validatePath } from "./protocol.mjs";
+import { buildAction, buildRead, workflows } from "./catalog.mjs";
 const runtime = path.dirname(socketPath);
 await fs.mkdir(runtime, { recursive: true, mode: 0o700 });
 await fs.chmod(runtime, 0o700);
+process.umask(0o077);
 let config = {
-  cloudOrigin: "https://jiji-browser-mcp.felicity-blessing.workers.dev",
+  cloudOrigin: "",
   cloudEnabled: false,
 };
 try {
@@ -60,6 +62,40 @@ async function action(m) {
   if (m.action === "conversation")
     return browser.run(() => browser.conversation(m.key));
   if (m.action === "saved") return browser.run(() => browser.saved());
+  if (m.action === "resource") {
+    buildRead(m.resource, m.parameters);
+    return browser.run(() => browser.readResource(m.resource, m.parameters));
+  }
+  if (m.action === "workflow" || m.action === "inspect_workflow") {
+    if (!workflows[m.workflow]) throw new Error("Unknown workflow.");
+    return browser.run(() =>
+      browser.workflow(m.workflow, m.action === "inspect_workflow"),
+    );
+  }
+  if (m.action === "prepare_action") {
+    const p = buildAction(m.operation, m.parameters);
+    return publicPlan(
+      plans.prepare({
+        type: "jiji_api_action",
+        operation: p.operation,
+        parameters: p.parameters,
+        title: p.title,
+        purpose: String(m.purpose || "").slice(0, 500),
+      }),
+    );
+  }
+  if (m.action === "prepare_advert") {
+    const p = await browser.run(() => browser.prepareAdvert(m.parameters));
+    return publicPlan(
+      plans.prepare({
+        type: "jiji_advert",
+        operation: p.operation,
+        parameters: p.parameters,
+        title: p.title,
+        purpose: p.notice,
+      }),
+    );
+  }
   if (m.action === "prepare_message") {
     const { plan } = m;
     if (
@@ -68,7 +104,11 @@ async function action(m) {
       !plan.listing_url ||
       typeof plan.message !== "string" ||
       plan.message.length > 4000 ||
-      !plan.chat_url
+      !plan.chat_url ||
+      (plan.offer_amount !== undefined &&
+        (!Number.isFinite(plan.offer_amount) ||
+          plan.offer_amount <= 0 ||
+          plan.offer_amount > 1e12))
     )
       throw new Error("Message plan is incomplete.");
     return publicPlan(plans.prepare({ ...plan, type: "jiji_message" }));
@@ -101,20 +141,41 @@ async function startCloud() {
     identity = await loadIdentity(config.credentialHelper, config.cloudOrigin);
     cloudAbort = new AbortController();
     const signal = cloudAbort.signal;
-    cloudError = "";
+    let failures = 0;
     while (!signal.aborted && enabled) {
-      const { jobs } = await remote("/bridge/poll", {}, signal);
-      cloudConnected = true;
-      for (const job of jobs || []) {
-        if (signal.aborted) break;
-        let result;
-        try {
-          result = await action(job);
-        } catch (e) {
-          result = { error: e.message };
+      try {
+        const { jobs } = await remote("/bridge/poll", {}, signal);
+        cloudConnected = true;
+        cloudError = "";
+        failures = 0;
+        for (const job of jobs || []) {
+          if (signal.aborted) break;
+          let result;
+          try {
+            result = await action(job.request || job);
+          } catch (e) {
+            result = { error: e.message };
+          }
+          if (!signal.aborted) {
+            // Transport correlation IDs are distinct from approval-plan IDs.
+            // Never rerun a Jiji operation when its response cannot be delivered.
+            await remote("/bridge/result", { id: job.id, result }, signal);
+          }
         }
-        if (!signal.aborted)
-          await remote("/bridge/result", { id: job.id, ...result }, signal);
+      } catch (e) {
+        if (signal.aborted) break;
+        cloudConnected = false;
+        cloudError = e.message;
+        const delay = Math.min(30000, 1000 * 2 ** Math.min(failures++, 5));
+        await new Promise((resolve) => {
+          const done = () => {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            resolve();
+          };
+          const timer = setTimeout(done, delay);
+          signal.addEventListener("abort", done, { once: true });
+        });
       }
     }
   } catch (e) {
@@ -124,6 +185,7 @@ async function startCloud() {
     cloudAbort = null;
   }
 }
+
 function send(res, data, status = 200) {
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -217,7 +279,13 @@ const web = http.createServer(async (req, res) => {
         return send(
           res,
           await plans.approve(u.pathname.split("/").pop(), (p) =>
-            browser.run(() => browser.send(p)),
+            browser.run(() =>
+              p.type === "jiji_message"
+                ? browser.send(p)
+                : p.type === "jiji_advert"
+                  ? browser.executeAdvert(p.parameters)
+                  : browser.executeAction(p.operation, p.parameters),
+            ),
           ),
         );
       return send(res, { error: "Not found" }, 404);
@@ -246,15 +314,20 @@ const web = http.createServer(async (req, res) => {
       });
     if (u.pathname.startsWith("/approve/")) {
       const p = plans.public(plans.get(u.pathname.split("/").pop()));
+      if (p.type !== "jiji_message")
+        return html(
+          res,
+          `<span class="eyebrow">REVIEW EXACT CHANGES</span><h1>${escape(p.title)}</h1><p>${escape(p.purpose)}</p><pre>${escape(JSON.stringify(p.parameters, null, 2))}</pre><p>This approval applies these changes once on your Jiji account. Review public posts, reports, and deletions carefully. Payments and credential changes are completed directly on Jiji.</p><form action="/api/approve/${escape(p.id)}" method="post"><input type="hidden" name="csrf" value="${csrf}"><button ${p.state !== "pending" ? "disabled" : ""}>Approve these changes on Jiji</button></form><p id="result" role="status">Status: ${escape(p.state)}</p>`,
+        );
       return html(
         res,
-        `<span class="eyebrow">REVIEW BEFORE SENDING</span><h1>Message ${escape(p.seller)}</h1><p>${escape(p.title)}</p><a href="${escape(p.listing_url)}" target="_blank" rel="noreferrer">View the exact Jiji listing</a><pre>${escape(p.message)}</pre><p>Approval sends this exact message once. Check any offer, delivery address, or payment commitment carefully.</p><form action="/api/approve/${escape(p.id)}" method="post"><input type="hidden" name="csrf" value="${csrf}"><button ${p.state !== "pending" ? "disabled" : ""}>Approve and send on Jiji</button></form><p id="result" role="status">Status: ${escape(p.state)}</p>`,
+        `<span class="eyebrow">REVIEW BEFORE SENDING</span><h1>Message ${escape(p.seller)}</h1><p>${escape(p.title)}</p><a href="${escape(p.listing_url)}" target="_blank" rel="noreferrer">View the exact Jiji listing</a>${p.offer_amount === undefined ? "" : `<h2>Native offer: ₦${escape(p.offer_amount)}</h2>`}<pre>${escape(p.message)}</pre><p>Approval sends this exact message or offer once. Check any offer, delivery address, or payment commitment carefully.</p><form action="/api/approve/${escape(p.id)}" method="post"><input type="hidden" name="csrf" value="${csrf}"><button ${p.state !== "pending" ? "disabled" : ""}>Approve and send on Jiji</button></form><p id="result" role="status">Status: ${escape(p.state)}</p>`,
       );
     }
     if (u.pathname === "/")
       return html(
         res,
-        `<span class="eyebrow">NO BROWSER EXTENSION REQUIRED</span><h1>Your Jiji, connected.</h1><p>Sign in directly on Jiji in the companion browser. Your agents share the connection; your password and cookies stay in that browser.</p><section><h2>Connection</h2><p id="status" role="status">Checking connection…</p><form action="/api/login" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Open Jiji sign-in</button></form><form action="/api/connect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Connect agents</button></form></section><section><h2>Pair ChatGPT, Claude or Grokbot</h2><p>Use this MCP URL in your agent:</p><code>${escape(config.cloudOrigin)}/mcp</code><p>Generate a code for each agent. Enter it only on your MCP server’s connection page.</p><form action="/api/pair" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Generate pairing code</button></form><output id="pairing"></output></section><section><h2>Seller messages</h2><p>Agents can prepare a message. You review the seller, listing and exact text here before it is sent. Preparing a draft never sends it.</p></section><form action="/api/disconnect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Disconnect</button></form><p id="result" role="status"></p>`,
+        `<span class="eyebrow">NO BROWSER EXTENSION REQUIRED</span><h1>Your Jiji, connected.</h1><p>Sign in directly on Jiji in the companion browser. Your agents share the connection; your password and cookies stay in that browser.</p><section><h2>Connection</h2><p id="status" role="status">Checking connection…</p><form action="/api/login" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Open Jiji sign-in</button></form><form action="/api/connect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Connect agents</button></form></section><section><h2>Pair ChatGPT, Claude or Grokbot</h2><p>Use this MCP URL in your agent:</p><code>${escape(config.cloudOrigin)}/mcp</code><p>Generate a code for each agent. Enter it only on your MCP server’s connection page.</p><form action="/api/pair" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Generate pairing code</button></form><output id="pairing"></output></section><section><h2>Review changes</h2><p>Agents can prepare messages and account changes. You review their exact contents here before anything is submitted. Preparing a plan sends nothing. Payments, identity uploads and credential changes are completed directly on Jiji.</p></section><form action="/api/disconnect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Disconnect</button></form><p id="result" role="status"></p>`,
       );
     return send(res, { error: "Not found" }, 404);
   } catch (e) {

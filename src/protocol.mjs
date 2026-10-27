@@ -38,6 +38,7 @@ export function validatePath(path) {
   return u.pathname + u.search;
 }
 export function listingUrl(raw) {
+  if (typeof raw !== "string" || !raw) return null;
   try {
     const u = new URL(raw, "https://jiji.ng");
     return u.origin === "https://jiji.ng" ? u.origin + u.pathname : null;
@@ -63,6 +64,8 @@ export function normalize(ad, seller = {}) {
       ad.region ??
       null,
     description: ad.description ?? ad.short_description ?? ad.details ?? "",
+    price_history: ad.price_history ?? null,
+    store_and_delivery: ad.services_info ?? null,
     attributes: (ad.attrs ?? []).map((a) => ({
       name: a.name,
       value: a.value,
@@ -78,6 +81,10 @@ export function normalize(ad, seller = {}) {
       response_time: seller.user_response_time ?? null,
       feedback_count: seller.feedback_count ?? null,
       labels: seller.labels ?? [],
+      joined: seller.date_created ?? null,
+      last_seen: seller.last_seen ?? null,
+      adverts_count: seller.adverts_count ?? null,
+      page_url: listingUrl(seller.page_url),
     },
     labels: ad.labels ?? [],
     promoted: Boolean(ad.paid_info),

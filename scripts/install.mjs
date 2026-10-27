@@ -17,7 +17,7 @@ if (!fs.existsSync(configPath))
     configPath,
     JSON.stringify(
       {
-        cloudOrigin: "https://jiji-browser-mcp.felicity-blessing.workers.dev",
+        cloudOrigin: "",
         cloudEnabled: false,
         enabled: true,
       },
@@ -39,7 +39,8 @@ console.log(
         command: process.execPath,
         args: [path.join(root, "src/server.mjs")],
       },
-      cloud_setup: "Set credentialHelper and cloudEnabled in " + configPath,
+      cloud_setup:
+        "Set cloudOrigin, credentialHelper and cloudEnabled in " + configPath,
     },
     null,
     2,
