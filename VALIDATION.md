@@ -1,10 +1,10 @@
-# Validation — version 0.3.1
+# Validation — version 0.3.2
 
 Verified on 2026-10-27. The platform baseline is `f4b7755`; `f119ec6` adds closed-tab recovery. The latest local companion also removes embedded seller contact fields from account research while preserving owner profile contacts. Version 0.3.1 adds shared native-filter inputs for listing search and market-price samples. Persistent OAuth storage has also migrated from KV to D1; approval boundaries and existing grants are preserved.
 
 ## Automated checks
 
-All **23 tests pass** after the browser lifecycle and contact-redaction fixes. They cover tool discovery, research/pagination, catalog schemas, credential and contact redaction inside the browser, owner profile preservation, advert identity, native-offer target validation, saved-search routing, one-time/concurrent/expired approvals, uncertain outcomes without retry, private socket/CSRF protections, and cloud OAuth/PKCE, isolation and expanded consent. `git diff --check` passes. Cloud build and dependency audit passed for the platform baseline; no dependency or Worker code changed in these local fixes.
+All **24 tests pass** after the browser lifecycle and contact-redaction fixes. They cover tool discovery, research/pagination, catalog schemas, credential and contact redaction inside the browser, owner profile preservation, advert identity, native-offer target validation, saved-search routing, one-time/concurrent/expired approvals, uncertain outcomes without retry, private socket/CSRF protections, and cloud OAuth/PKCE, isolation and expanded consent. `git diff --check` passes. Cloud build and dependency audit passed for the platform baseline; no dependency or Worker code changed in these local fixes.
 
 ## Authenticated live checks
 
@@ -42,3 +42,7 @@ Live category-scoped 450 W solar-panel checks returned 8/8 Used listings and a p
 The central migration removed the live KV binding and populated the existing D1 database while retaining the bridge Durable Objects. A fresh hosted OAuth/PKCE grant now passes discovery of all 21 tools, the final catalog, real Used/Brand New filtered searches, signed-in status, public search/detail, private account reads and pending-plan/status routing without submission. An earlier pairing attempt failed during the KV-era transition and was not counted as passed.
 
 A dedicated D1 persistence test exercises binary/Unicode/JSON data, metadata, expired-record exclusion, paginated prefix listing, deletion and migration tombstones preventing revoked credentials from reappearing. Deployment tooling preserves the existing D1/bridge bindings and no longer provisions KV. D1 and Worker/DO free-plan quotas remain applicable; no paid plan change was made by this migration.
+
+## Same-page pagination recovery
+
+Version 0.3.2 fixes the real Grokbot finding that a small limit could hide remaining results when Jiji supplied no next-page URL. Cursors now retain the unused normalized results from the current page before following the authoritative server URL. Live verification returned 3 plus 14 results: 17 distinct Used listings, with only one upstream Jiji request. Automated tests cover both final pages and pages followed by another server page, with no omissions, duplicates or extra upstream reads for the buffered remainder.

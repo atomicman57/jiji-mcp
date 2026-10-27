@@ -40,7 +40,7 @@ For example, the verified solar-panel category supports:
 }
 ```
 
-Both `jiji_search` and `jiji_market_prices` accept category/region slugs, prices and these native filters. Values can be a string or an array for multiple selections. Pagination follows the server’s returned cursor and retains its filters. Market prices remain a one-page asking-price sample; query words such as “used” alone are not condition filters. Clients may need a tool refresh to discover the added optional inputs.
+Both `jiji_search` and `jiji_market_prices` accept category/region slugs, prices and these native filters. Values can be a string or an array for multiple selections. Pagination serves any remaining same-page results first, then follows Jiji’s returned next-page URL, retaining filters. A small limit no longer hides results from the final page. Market prices remain a one-page asking-price sample; query words such as “used” alone are not condition filters. Clients may need a tool refresh to discover the added optional inputs.
 
 ## Install (macOS)
 

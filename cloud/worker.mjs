@@ -157,7 +157,7 @@ const defaultHandler = {
         await req.json(),
       );
     }
-    if (u.pathname === "/health") return json({ ok: true, version: "0.3.1" });
+    if (u.pathname === "/health") return json({ ok: true, version: "0.3.2" });
     if (u.pathname === "/")
       return html(
         '<h1>Jiji MCP</h1><p>Open-source marketplace and account tools through your own Jiji browser session.</p><p>Start the extension-free companion, sign in on jiji.ng, then connect an MCP agent to <code>/mcp</code>. Use a one-time code from your companion to pair each agent.</p><p>This is an independent project, unaffiliated with Jiji.</p><a href="https://github.com/atomicman57/jiji-mcp">Source and installation</a>',

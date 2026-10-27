@@ -1,4 +1,4 @@
-# Feature coverage — 0.3.1
+# Feature coverage — 0.3.2
 
 Audited on 2026-10-27 against Jiji’s live web interface, public application route/API definitions and [help centre](https://jiji.ng/faq). This is an independent integration of the web product; undocumented endpoints can change and account, category, country or subscription restrictions still apply.
 

@@ -101,6 +101,63 @@ test("access restrictions return actionable errors without retry", async () => {
     await x.close();
   }
 });
+test("small search limits retain every item, including the final server page", async () => {
+  const adverts = Array.from({ length: 7 }, (_, index) => ({
+    ...advert,
+    guid: `listing0000000${index}`,
+  }));
+  const next = "/api_web/v1/listing?query=router&page=2&crsr=authoritative";
+  for (const hasNext of [false, true]) {
+    const paths = [];
+    const x = await setup(async (m) => {
+      paths.push(m.path);
+      return {
+        status: 200,
+        body: {
+          adverts_list: {
+            count: hasNext ? 7 : 5,
+            adverts: m.path === next ? adverts.slice(5) : adverts.slice(0, 5),
+          },
+          next_url: m.path !== next && hasNext ? next : null,
+        },
+      };
+    });
+    try {
+      const call = async (name, args) => {
+        const r = await x.client.callTool({ name, arguments: args });
+        assert.ok(!r.isError);
+        return JSON.parse(r.content[0].text);
+      };
+      let result = await call("jiji_search", { query: "router", limit: 2 });
+      assert.equal(result.remaining_on_page, 3);
+      const ids = result.results.map((a) => a.guid);
+      let pages = 1;
+      while (result.next_cursor) {
+        assert.ok(pages++ < 5, "pagination must finish");
+        result = await call("jiji_next_page", {
+          cursor: result.next_cursor,
+          limit: 2,
+        });
+        ids.push(...result.results.map((a) => a.guid));
+        if (ids.length <= 5)
+          assert.equal(
+            paths.length,
+            1,
+            "same-page remainder needs no additional Jiji request",
+          );
+      }
+      assert.deepEqual(
+        ids,
+        adverts.slice(0, hasNext ? 7 : 5).map((a) => a.guid),
+      );
+      assert.equal(new Set(ids).size, ids.length);
+      assert.equal(paths.length, hasNext ? 2 : 1);
+      if (hasNext) assert.equal(paths[1], next);
+    } finally {
+      await x.close();
+    }
+  }
+});
 test("native attribute filters reach search, pagination and market-price samples", async () => {
   const paths = [];
   const next =
