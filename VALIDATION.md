@@ -21,10 +21,10 @@ The Mac companion runs as a LaunchAgent with a private socket and browser profil
 ## Client completion is still open
 
 - Codex: configured and live research/catalog/preparation calls verified. Authenticated account checks remain pending sign-in.
-- ChatGPT: installed; actual hosted search/detail calls succeeded. Expanded OAuth consent/callback and connected-account UI were verified, and tools were refreshed against the final deployment. A dedicated read-only verification chat completed; its detailed response still needs inspection.
-- Claude: the replacement OAuth connection succeeded. Its settings show all 21 tools (16 read-only and 5 preparation/navigation tools), with approved reads enabled. A dedicated read-only client test was submitted; its result still needs inspection.
-- Grokbot: native installation/test remains pending. Its local UI did not respond to connector controls; further desktop setup stopped when the Mac locked.
+- ChatGPT: all 21 app tools are available. Live capability/status, expanded-grant search-suggestion reads, and prepare/status calls succeeded through the connected app. Search/detail calls also succeeded. The web verification chat currently displays “This response couldn’t load,” including after reload; that display issue is separate from the verified MCP responses.
+- Claude: OAuth and all 21 tools are verified. The saved verification chat passed capability, search and first-listing detail calls. Its initial status call timed out; a standalone retry succeeded and reported the browser/relay connected with Jiji signed out. No seller contact or mutation was exercised.
+- Grokbot: native installation/test remains pending. After unlock, its UI is readable but connector controls return invalid-element/frontmost-application errors. The import configuration is prepared; the personal setup window needs to be active to continue.
 
-The remaining browser setup and test pages were preserved. Native app control again reports the Mac is locked. Unlock and Jiji sign-in are required to finish authenticated inbox/saved/account tests and verify all four clients.
+The remaining browser setup and test pages were preserved. The user has unlocked the Mac. Grokbot native control is still blocked by window/focus errors, and Jiji sign-in is still required to finish authenticated inbox/saved/account tests and verify all four clients.
 
 No live test sends a seller message or native offer, publishes/deletes an advert, files feedback/reports, pays, changes credentials or permanently deletes data. Fixtures are not evidence that those real effects have been exercised. Browser owner handoffs in FEATURES.md are not claims of full automation.
