@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { normalize } from "./protocol.mjs";
+import { searchFields, searchPath } from "./search.mjs";
 const guid = z.string().regex(/^[A-Za-z0-9]{8,64}$/);
 export function registerFeatures(register, request, fetchJSON) {
   const detail = async (id) => {
@@ -44,19 +45,10 @@ export function registerFeatures(register, request, fetchJSON) {
   );
   register(
     "jiji_market_prices",
-    "Summarize advertised prices from one Jiji search page for resale research. These are asking prices, not verified completed sales. Use separate queries for used/new models.",
-    { query: z.string().min(2).max(200) },
-    async ({ query }) => {
-      const b = await fetchJSON(
-        "/api_web/v1/listing?" +
-          new URLSearchParams({
-            query,
-            init_page: "true",
-            page: "1",
-            webp: "false",
-            sort: "rel",
-          }),
-      );
+    "Summarize advertised asking prices from one search page, with native category/region/price/attribute filters. Learn exact condition filter_name/value from jiji_account_data listing_filters, then sample used and new separately. These are asking prices, not completed sales or a valuation.",
+    searchFields,
+    async (args) => {
+      const b = await fetchJSON(searchPath(args));
       if (!Array.isArray(b.adverts_list?.adverts))
         throw new Error("Search response changed.");
       const seen = new Set();
@@ -72,7 +64,8 @@ export function registerFeatures(register, request, fetchJSON) {
         .sort((a, b) => a - b);
       const n = prices.length;
       return {
-        query,
+        query: args.query,
+        requested_filters: args.filters ?? {},
         total_matches: b.adverts_list.count,
         sampled_sellers: listings.length,
         priced_samples: n,

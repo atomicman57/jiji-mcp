@@ -101,6 +101,92 @@ test("access restrictions return actionable errors without retry", async () => {
     await x.close();
   }
 });
+test("native attribute filters reach search, pagination and market-price samples", async () => {
+  const paths = [];
+  const next =
+    "/api_web/v1/listing?query=panel&page=2&filter_attr_1484_condition=Used&crsr=opaque";
+  const x = await setup(async (m) => {
+    paths.push(m.path);
+    return {
+      status: 200,
+      body: { adverts_list: { count: 1, adverts: [advert] }, next_url: next },
+    };
+  });
+  try {
+    const args = {
+      query: "panel",
+      category_slug: "solar-energy-products",
+      filters: {
+        filter_attr_1484_condition: "Used",
+        filter_attr_2330_brand: ["A&B", "Example"],
+      },
+      region_id: 1,
+    };
+    const search = await x.client.callTool({
+      name: "jiji_search",
+      arguments: args,
+    });
+    assert.ok(!search.isError);
+    const url = new URL(paths[0], "https://jiji.ng");
+    assert.equal(url.searchParams.get("filter_attr_1484_condition"), "Used");
+    assert.deepEqual(url.searchParams.getAll("filter_attr_2330_brand"), [
+      "A&B",
+      "Example",
+    ]);
+    assert.equal(url.searchParams.get("region_id"), "1");
+    assert.equal(url.searchParams.get("slug"), "solar-energy-products");
+    assert.equal(url.searchParams.has("B"), false);
+    const result = JSON.parse(search.content[0].text);
+    assert.ok(
+      !(
+        await x.client.callTool({
+          name: "jiji_next_page",
+          arguments: { cursor: result.next_cursor },
+        })
+      ).isError,
+    );
+    assert.equal(paths[1], next);
+    const prices = await x.client.callTool({
+      name: "jiji_market_prices",
+      arguments: args,
+    });
+    assert.ok(!prices.isError);
+    assert.equal(
+      new URL(paths[2], "https://jiji.ng").searchParams.get(
+        "filter_attr_1484_condition",
+      ),
+      "Used",
+    );
+    const calls = paths.length;
+    const unscoped = await x.client.callTool({
+      name: "jiji_search",
+      arguments: {
+        query: "panel",
+        filters: { filter_attr_1484_condition: "Used" },
+      },
+    });
+    assert.equal(unscoped.isError, true);
+    assert.match(unscoped.content[0].text, /require category_slug/);
+    for (const filters of [
+      { query: "override" },
+      { redirect: "https://evil.test" },
+      { filter_attr_1484_condition: "" },
+    ]) {
+      assert.equal(
+        (
+          await x.client.callTool({
+            name: "jiji_search",
+            arguments: { query: "panel", filters },
+          })
+        ).isError,
+        true,
+      );
+    }
+    assert.equal(paths.length, calls);
+  } finally {
+    await x.close();
+  }
+});
 test("unknown cursors and changed schemas fail closed", async () => {
   const x = await setup(async () => ({
     status: 200,

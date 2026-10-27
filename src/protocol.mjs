@@ -1,3 +1,6 @@
+export const attributeFilterKey =
+  /^filter_(?:attr_[1-9]\d{0,6}_[a-z0-9_]{1,60}|id_verify|discount)$/;
+
 export function validatePath(path) {
   const u = new URL(path, "https://jiji.ng");
   if (
@@ -26,14 +29,24 @@ export function validatePath(path) {
         "lsmid",
         "region_id",
         "category_id",
+        "slug",
+        "region_slug",
         "price_min",
         "price_max",
       ]
     : u.pathname.endsWith("_phone.json")
       ? []
       : ["webp"];
-  for (const key of u.searchParams.keys())
-    if (!allowed.includes(key))
+  for (const [key, value] of u.searchParams)
+    if (
+      !allowed.includes(key) &&
+      !(
+        u.pathname.endsWith("/listing") &&
+        attributeFilterKey.test(key) &&
+        value.length > 0 &&
+        value.length <= 200
+      )
+    )
       throw new Error("Unsupported search parameter.");
   return u.pathname + u.search;
 }

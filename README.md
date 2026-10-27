@@ -22,6 +22,26 @@ This project is not affiliated with Jiji. Undocumented endpoints and page select
 
 There are 21 MCP tools. There is no MCP send/approve tool. `jiji_prepare_message` returns a local approval page showing the exact seller, listing and message. Only the owner can submit that page. Each plan expires after ten minutes and can be used once. An uncertain result is not retried automatically. Payments, media uploads, identity verification and credential changes are completed directly on Jiji through owner workflows. Account changes use the same local approval boundary.
 
+## Native category filters
+
+For used/new, brand or type filters, first call `jiji_account_data` with `resource: "listing_filters"` and the category `slug`. Use the returned exact `filter_name` and values; attribute identifiers vary by category. Supply that category as `category_slug` when searching. Unscoped attribute filters are rejected because Jiji can silently ignore them.
+
+For example, the verified solar-panel category supports:
+
+```json
+{
+  "query": "450w solar panel",
+  "category_slug": "solar-energy-products",
+  "filters": {
+    "filter_attr_1484_condition": "Used",
+    "filter_attr_1483_type": "Solar Panels"
+  },
+  "limit": 8
+}
+```
+
+Both `jiji_search` and `jiji_market_prices` accept category/region slugs, prices and these native filters. Values can be a string or an array for multiple selections. Pagination follows the server’s returned cursor and retains its filters. Market prices remain a one-page asking-price sample; query words such as “used” alone are not condition filters. Clients may need a tool refresh to discover the added optional inputs.
+
 ## Install (macOS)
 
 Requires Node.js 22+ and Google Chrome.
