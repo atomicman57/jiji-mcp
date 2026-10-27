@@ -191,7 +191,7 @@ test("native offers require the approved listing and a confirmed Jiji response",
   browser.go = async () => ({
     url: () => "https://jiji.ng/profile-messages/7_12",
     locator: (selector) =>
-      selector.startsWith("a[")
+      selector === "a.b-messenger-room-advert-info-link"
         ? {
             evaluateAll: async () =>
               matching ? [{ url: plan.listing_url }] : [],
@@ -205,7 +205,7 @@ test("native offers require the approved listing and a confirmed Jiji response",
     assert.match(request.body.client_msg_id, /^[a-f0-9-]+$/);
     return { status: 200, body: { status: "ok" } };
   };
-  await assert.rejects(browser.send(plan), /does not match/);
+  await assert.rejects(browser.send(plan), /identified uniquely/);
   assert.equal(calls, 0);
   matching = true;
   assert.equal((await browser.send(plan)).sent, true);

@@ -22,6 +22,8 @@ This project is not affiliated with Jiji. Undocumented endpoints and page select
 
 There are 22 MCP tools. There is no MCP send/approve tool. `jiji_prepare_message` returns a local approval page showing the exact seller, listing and message. `jiji_prepare_conversation_message` takes an inbox `key` and exact `message` to prepare a reply to that existing conversation through the same approval page. Expired or ambiguous references fail without sending; list conversations again. Only the owner can submit that page. Each plan expires after ten minutes and can be used once. An uncertain result is not retried automatically. Payments, media uploads, identity verification and credential changes are completed directly on Jiji through owner workflows. Account changes use the same local approval boundary.
 
+Listing preparation resolves existing chat rooms by the exact advert URL returned by Jiji’s room inventory, including listings whose `message_url` opens a message form. Conversation replies and approved sends use the active room’s advert header, so appended prices and links quoted inside messages cannot change the listing target. Ambiguous or unavailable targets still fail without sending.
+
 ## Native category filters
 
 For used/new, brand or type filters, first call `jiji_account_data` with `resource: "listing_filters"` and the category `slug`. Use the returned exact `filter_name` and values; attribute identifiers vary by category. Supply that category as `category_slug` when searching. Unscoped attribute filters are rejected because Jiji can silently ignore them.

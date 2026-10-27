@@ -174,6 +174,7 @@ test("listing preparation uses filtered identity, read-only fallback, and fails 
 
 test("listing-page fallback rejects redirects and ambiguous or external chat links", async () => {
   const browser = new JijiBrowser("unused-mock-profile");
+  browser.listingRoom = async () => null;
   for (const chats of [
     [room],
     ["https://evil.test" + room],
@@ -367,4 +368,142 @@ test("changed chat target stops before any editor or mutation", async () => {
     browser.send({ chat_url: room, listing_url: listing, message: "Hello" }),
     /target changed/,
   );
+});
+
+test("listing form URLs resolve through verified room IDs and exact advert URLs across pages", async () => {
+  const browser = new JijiBrowser("unused-mock-profile");
+  const seen = [];
+  browser.go = () =>
+    assert.fail("An existing room needs no listing-page navigation");
+  browser.send = () => assert.fail("Resolution never sends");
+  browser.catalogRequest = async (request) => {
+    seen.push(request);
+    assert.equal(request.method, undefined, "only GET is allowed");
+    return {
+      status: 200,
+      body: {
+        status: "ok",
+        results:
+          seen.length === 1
+            ? [
+                {
+                  room_id: 1,
+                  advert: { url: "/other.html", title: advert.title },
+                  user: { user_name: "Other seller" },
+                },
+              ]
+            : [
+                {
+                  room_id: 116980747,
+                  advert: { url: advert.url },
+                  user: { user_name: " Example seller " },
+                },
+              ],
+        next_url:
+          seen.length === 1
+            ? "/api_web/v1/chat/rooms.json?page=2&sort=active"
+            : null,
+      },
+    };
+  };
+  const detail = normalize(
+    { ...advert, message_url: advert.url + "?show_message=1" },
+    { name: "Example seller" },
+  );
+  assert.equal(detail.chat_url, null, "a message form URL is not a room ID");
+  assert.deepEqual(await browser.resolveListingTarget(detail.url), {
+    chat_url: "/profile-messages/116980747",
+    seller: "Example seller",
+  });
+  assert.deepEqual(
+    seen.map((r) => r.path),
+    [
+      "/api_web/v1/chat/rooms.json",
+      "/api_web/v1/chat/rooms.json?page=2&sort=active",
+    ],
+  );
+});
+
+test("room lookup rejects ambiguous matches, malformed IDs, challenges, and unsafe or repeated pagination", async () => {
+  const browser = new JijiBrowser("unused-mock-profile");
+  const row = {
+    room_id: 123,
+    advert: { url: listing },
+    user: { user_name: "Seller" },
+  };
+  for (const [response, error] of [
+    [
+      {
+        status: 200,
+        body: { status: "ok", results: [row, { ...row, room_id: 456 }] },
+      },
+      /no unique verified/,
+    ],
+    [
+      {
+        status: 200,
+        body: { status: "ok", results: [{ ...row, room_id: "../../other" }] },
+      },
+      /invalid conversation ID/,
+    ],
+    [{ status: 403 }, /unavailable/],
+    [
+      {
+        status: 200,
+        body: {
+          status: "ok",
+          results: [],
+          next_url: "https://evil.test/api_web/v1/chat/rooms.json",
+        },
+      },
+      /pagination target/,
+    ],
+    [
+      {
+        status: 200,
+        body: {
+          status: "ok",
+          results: [],
+          next_url: "/api_web/v1/chat/rooms.json",
+        },
+      },
+      /incomplete/,
+    ],
+  ]) {
+    let calls = 0;
+    browser.catalogRequest = async () => {
+      calls++;
+      return response;
+    };
+    await assert.rejects(browser.listingRoom(listing), error);
+    assert.equal(calls, 1, "fail without retries or unsafe next requests");
+  }
+});
+
+test("active conversation header includes price and ignores quoted or preview links", async () => {
+  const browser = new JijiBrowser("unused-mock-profile");
+  const page = {
+    locator(selector) {
+      assert.equal(
+        selector,
+        "a.b-messenger-room-advert-info-link",
+        "only the active advert header is authoritative",
+      );
+      return {
+        evaluateAll: async (fn) =>
+          fn([{ href: listing, textContent: advert.title + "₦ 78,000" }]),
+      };
+    },
+  };
+  assert.equal(await browser.conversationListing(page), listing);
+  browser.openConversation = async () => ({
+    page: { ...page, url: () => "https://jiji.ng" + room },
+    item: { seller: "Seller", title: advert.title },
+  });
+  const plan = await browser.prepareConversationMessage(
+    key,
+    "MCP verification only. Do not send.",
+  );
+  assert.equal(plan.listing_url, listing);
+  assert.equal(plan.chat_url, room);
 });
