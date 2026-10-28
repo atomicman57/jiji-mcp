@@ -90,7 +90,7 @@ Run these on the machines named in each step. Do not copy `~/Library/Application
    sudo systemctl stop jiji-mcp-signin.service
    ```
 
-   `x11vnc` listens on `127.0.0.1` only and accepts one client. Do not publish port 5900. The unit also exits after 30 minutes and removes the password file.
+   `x11vnc` listens on `127.0.0.1` only, accepts one client, and reads the password from that file with `-passwdfile`. The password is not placed on the x11vnc command line. Do not publish port 5900. The unit also exits after 30 minutes and removes the password file.
 
 6. Enable and start the headless companion. It conflicts with the sign-in unit, so only one of them holds the profile and the outbound bridge.
 

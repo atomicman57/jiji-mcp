@@ -28,7 +28,8 @@ RUN npm ci --omit=dev
 COPY src ./src
 COPY deploy/entrypoint.sh /entrypoint.sh
 COPY deploy/credential-helper.mjs /usr/local/bin/jiji-credential-helper
-RUN chmod 0555 /entrypoint.sh /usr/local/bin/jiji-credential-helper
+COPY deploy/vnc-password.mjs /usr/local/bin/jiji-vnc-password
+RUN chmod 0555 /entrypoint.sh /usr/local/bin/jiji-credential-helper /usr/local/bin/jiji-vnc-password
 
 USER 950:950
 VOLUME /data

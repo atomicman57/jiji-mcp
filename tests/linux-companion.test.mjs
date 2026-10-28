@@ -10,6 +10,10 @@ import {
   loopbackBindHost,
 } from "../src/runtime-policy.mjs";
 import { closeReplacedCompanions } from "../cloud/single-bridge.mjs";
+import {
+  createVncPassword,
+  VNC_PASSWORD_PATTERN,
+} from "../deploy/vnc-password.mjs";
 
 const root = new URL("..", import.meta.url);
 
@@ -78,12 +82,14 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   assert.match(dockerfile, /USER 950:950/);
   assert.match(entry, /-localhost/);
   assert.match(entry, /-nolisten tcp/);
-  assert.match(entry, /-rfbauth/);
-  assert.match(entry, /chmod 0600/);
+  assert.match(entry, /-passwdfile/);
+  assert.match(entry, /jiji-vnc-password create/);
   assert.match(entry, /sudo cat \/var\/lib\/jiji-mcp\/vnc-password/);
   assert.doesNotMatch(entry, /-nopw/);
   assert.doesNotMatch(entry, /-shared/);
-  assert.doesNotMatch(entry, /echo[^\\n]*\$pw/);
+  assert.doesNotMatch(entry, /-storepasswd/);
+  assert.doesNotMatch(entry, /-rfbauth/);
+  assert.doesNotMatch(entry, /\$pw/);
   assert.doesNotMatch(entry, /0\.0\.0\.0/);
   for (const unit of [steady, signin]) {
     assert.match(unit, /--read-only/);
@@ -103,7 +109,7 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   assert.match(signin, /RuntimeMaxSec=1800/);
   assert.match(
     signin,
-    /ExecStopPost=-\/bin\/rm -f \/var\/lib\/jiji-mcp\/vnc-password \/var\/lib\/jiji-mcp\/vnc-auth/,
+    /ExecStopPost=-\/bin\/rm -f \/var\/lib\/jiji-mcp\/vnc-password/,
   );
   assert.doesNotMatch(signin, /WantedBy=/);
   assert.match(worker, /closeReplacedCompanions/);
@@ -112,6 +118,42 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   assert.match(wrangler, /"class_name": "JijiBridge"/);
   const envExample = await text("deploy/env.example");
   assert.doesNotMatch(envExample, /^JIJI_HOURLY_SEND_CAP=/m);
+});
+
+function runNode(script, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script, ...args], {
+      env: process.env,
+    });
+    let err = "";
+    child.stderr.on("data", (chunk) => {
+      err += chunk;
+    });
+    child.on("error", reject);
+    child.on("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(err || "exit " + code)),
+    );
+  });
+}
+
+test("vnc password generation writes eight safe characters and cleanup deletes the file", async () => {
+  for (let i = 0; i < 20; i++)
+    assert.match(createVncPassword(), VNC_PASSWORD_PATTERN);
+  const dir = await mkdtemp(path.join(tmpdir(), "jiji-vnc-"));
+  const file = path.join(dir, "vnc-password");
+  const script = new URL("../deploy/vnc-password.mjs", import.meta.url)
+    .pathname;
+  try {
+    await runNode(script, ["create", file]);
+    const password = (await readFile(file, "utf8")).trim();
+    assert.equal(password.length, 8);
+    assert.match(password, VNC_PASSWORD_PATTERN);
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    await runNode(script, ["remove", file]);
+    await assert.rejects(stat(file), { code: "ENOENT" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("the relay credential helper persists one identity and no browser profile", async () => {
