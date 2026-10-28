@@ -78,6 +78,12 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   assert.match(dockerfile, /USER 950:950/);
   assert.match(entry, /-localhost/);
   assert.match(entry, /-nolisten tcp/);
+  assert.match(entry, /-rfbauth/);
+  assert.match(entry, /chmod 0600/);
+  assert.match(entry, /sudo cat \/var\/lib\/jiji-mcp\/vnc-password/);
+  assert.doesNotMatch(entry, /-nopw/);
+  assert.doesNotMatch(entry, /-shared/);
+  assert.doesNotMatch(entry, /echo[^\\n]*\$pw/);
   assert.doesNotMatch(entry, /0\.0\.0\.0/);
   for (const unit of [steady, signin]) {
     assert.match(unit, /--read-only/);
@@ -95,6 +101,10 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   assert.match(signin, /-e JIJI_HEADLESS=false/);
   assert.match(signin, /Conflicts=jiji-mcp\.service/);
   assert.match(signin, /RuntimeMaxSec=1800/);
+  assert.match(
+    signin,
+    /ExecStopPost=-\/bin\/rm -f \/var\/lib\/jiji-mcp\/vnc-password \/var\/lib\/jiji-mcp\/vnc-auth/,
+  );
   assert.doesNotMatch(signin, /WantedBy=/);
   assert.match(worker, /closeReplacedCompanions/);
   assert.match(wrangler, /"binding": "MCP_STORAGE"/);

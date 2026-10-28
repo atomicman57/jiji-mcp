@@ -73,23 +73,24 @@ Run these on the machines named in each step. Do not copy `~/Library/Application
    sudo systemctl daemon-reload
    ```
 
-5. Start the sign-in unit. From the owner's computer, forward the loopback VNC port and sign in to Jiji in that window. Then stop the unit. Nothing here copies a profile.
+5. Start the sign-in unit. It writes a one-time VNC password to `/var/lib/jiji-mcp/vnc-password` (mode `0600`, uid 950). The password is not printed in the journal. Read it on the server, forward only loopback port 5900, and sign in to Jiji yourself. Then stop the unit. Stopping deletes the password file. Nothing here copies a profile.
 
    ```sh
    sudo systemctl start jiji-mcp-signin.service
+   sudo cat /var/lib/jiji-mcp/vnc-password
    ```
 
    ```sh
    ssh -L 5900:127.0.0.1:5900 <linux-host>
    ```
 
-   Open a VNC client to `127.0.0.1:5900`, complete Jiji sign-in, then:
+   Open a VNC client to `127.0.0.1:5900`, enter that password, complete Jiji sign-in, then:
 
    ```sh
    sudo systemctl stop jiji-mcp-signin.service
    ```
 
-   `x11vnc` is started with `-localhost`. Do not publish port 5900.
+   `x11vnc` listens on `127.0.0.1` only and accepts one client. Do not publish port 5900. The unit also exits after 30 minutes and removes the password file.
 
 6. Enable and start the headless companion. It conflicts with the sign-in unit, so only one of them holds the profile and the outbound bridge.
 

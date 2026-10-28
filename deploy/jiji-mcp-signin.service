@@ -11,4 +11,5 @@ ExecStartPre=/usr/local/sbin/jiji-mcp-init-data
 ExecStartPre=/usr/bin/docker rm -f jiji-mcp-signin
 ExecStart=/usr/bin/docker run --name jiji-mcp-signin --rm --read-only --cap-drop=ALL --security-opt no-new-privileges:true --user 950:950 --network host --tmpfs /tmp:rw,nosuid,size=512m --shm-size=1g -v /var/lib/jiji-mcp:/data --env-file /etc/jiji-mcp/env -e JIJI_SIGNIN=1 -e JIJI_HEADLESS=false jiji-mcp:local
 ExecStop=/usr/bin/docker stop jiji-mcp-signin
+ExecStopPost=-/bin/rm -f /var/lib/jiji-mcp/vnc-password /var/lib/jiji-mcp/vnc-auth
 RuntimeMaxSec=1800

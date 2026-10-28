@@ -19,15 +19,38 @@ if [ "${JIJI_SIGNIN:-0}" = "1" ]; then
     fi
     sleep 0.1
   done
+  # One-time VNC password. The plaintext file is mode 0600 and is removed on exit.
+  # Do not print the password; the owner reads the file with sudo.
+  password_file="${JIJI_VNC_PASSWORD_FILE:-/data/vnc-password}"
+  auth_file="${JIJI_VNC_AUTH_FILE:-/data/vnc-auth}"
+  cleanup() {
+    rm -f "$password_file" "$auth_file"
+    if [ -n "${vnc_pid:-}" ]; then kill "$vnc_pid" 2>/dev/null || true; fi
+    if [ -n "${xvfb_pid:-}" ]; then kill "$xvfb_pid" 2>/dev/null || true; fi
+    if [ -n "${node_pid:-}" ]; then kill "$node_pid" 2>/dev/null || true; fi
+  }
+  trap cleanup EXIT INT TERM
+  umask 077
+  pw=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(6).toString("base64url").slice(0,8))')
+  printf '%s\n' "$pw" > "$password_file"
+  chmod 0600 "$password_file"
+  x11vnc -storepasswd "$pw" "$auth_file" >/dev/null 2>&1
+  chmod 0600 "$auth_file"
+  unset pw
+  echo "VNC is loopback-only. Read the one-time password with: sudo cat /var/lib/jiji-mcp/vnc-password" >&2
   x11vnc \
     -display "$DISPLAY" \
     -localhost \
+    -rfbauth "$auth_file" \
     -rfbport "${JIJI_VNC_PORT:-5900}" \
     -forever \
-    -shared \
-    -nopw \
     -noxdamage >/tmp/x11vnc.log 2>&1 &
   vnc_pid=$!
-  trap 'kill "$vnc_pid" "$xvfb_pid" 2>/dev/null || true' EXIT INT TERM
+  node /app/src/companion.mjs &
+  node_pid=$!
+  wait "$node_pid"
+  status=$?
+  cleanup
+  exit "$status"
 fi
 exec node /app/src/companion.mjs
