@@ -235,7 +235,11 @@ test("existing-conversation tool creates the same pending one-time approval plan
     },
     async (client) => {
       const tools = (await client.listTools()).tools;
-      assert.ok(!tools.some((t) => /approve|^jiji_send/.test(t.name)));
+      assert.equal(
+        tools.filter((t) => t.name === "jiji_send_prepared").length,
+        1,
+      );
+      assert.ok(!tools.some((t) => /approve/.test(t.name)));
       for (const args of [
         { key: "invalid", message: "Hello" },
         { key, message: "  " },

@@ -10,6 +10,13 @@ import { fileURLToPath } from "node:url";
 import { JijiBrowser } from "./browser-driver.mjs";
 import { ApprovalPlans } from "./plans.mjs";
 import { prepareMessageAction } from "./message-actions.mjs";
+import {
+  createRelease,
+  finishPreparedMessage,
+  openSendLog,
+  readSendSettings,
+  releasePrepared,
+} from "./message-release.mjs";
 import { loadIdentity } from "./identity.mjs";
 import { socketPath } from "./bridge.mjs";
 import { validatePath } from "./protocol.mjs";
@@ -32,8 +39,25 @@ try {
 }
 const port = Number(config.port || 38473);
 const origin = `http://127.0.0.1:${port}`;
+const settings = readSendSettings(process.env, config);
 const browser = new JijiBrowser(path.join(runtime, "browser-profile"));
 const plans = new ApprovalPlans();
+const sendLog = await openSendLog(path.join(runtime, "send-log.jsonl"));
+// The local Approve button, auto-approve, and jiji_send_prepared all use this.
+const dispatchPlan = (p) =>
+  browser.run(() =>
+    p.type === "jiji_message"
+      ? browser.send(p)
+      : p.type === "jiji_advert"
+        ? browser.executeAdvert(p.parameters)
+        : browser.executeAction(p.operation, p.parameters),
+  );
+const release = createRelease({
+  plans,
+  send: dispatchPlan,
+  log: sendLog,
+  settings,
+});
 let enabled = config.enabled !== false,
   cloudConnected = false,
   cloudError = "",
@@ -53,6 +77,8 @@ async function action(m) {
       companion_url: origin,
       cloud_connected: cloudConnected,
       cloud_transport: "hibernating-websocket",
+      auto_approve: settings.autoApprove,
+      hourly_send_cap: settings.hourlySendCap,
     };
   if (m.action === "login") return browser.run(() => browser.login());
   if (!enabled)
@@ -101,8 +127,22 @@ async function action(m) {
   }
   if (m.action === "resolve_listing_target")
     return browser.run(() => browser.resolveListingTarget(m.listing_url));
-  if (["prepare_message", "prepare_conversation_message"].includes(m.action))
-    return publicPlan(await prepareMessageAction(browser, plans, m));
+  if (["prepare_message", "prepare_conversation_message"].includes(m.action)) {
+    const prepared = await prepareMessageAction(browser, plans, m);
+    return publicPlan(
+      await finishPreparedMessage(settings.autoApprove, prepared, release),
+    );
+  }
+  if (m.action === "send_prepared") {
+    if (!settings.autoApprove)
+      await releasePrepared(settings.autoApprove, release, m.id);
+    const existing = plans.get(m.id);
+    if (existing.type !== "jiji_message")
+      throw new Error("Only a prepared message can be released.");
+    return publicPlan(
+      await releasePrepared(settings.autoApprove, release, existing.id),
+    );
+  }
   if (m.action === "plan_status")
     return publicPlan(plans.public(plans.get(m.id)));
   throw new Error("Unsupported companion action.");
@@ -260,18 +300,7 @@ const web = http.createServer(async (req, res) => {
         return send(res, { connected: true });
       }
       if (u.pathname.startsWith("/api/approve/"))
-        return send(
-          res,
-          await plans.approve(u.pathname.split("/").pop(), (p) =>
-            browser.run(() =>
-              p.type === "jiji_message"
-                ? browser.send(p)
-                : p.type === "jiji_advert"
-                  ? browser.executeAdvert(p.parameters)
-                  : browser.executeAction(p.operation, p.parameters),
-            ),
-          ),
-        );
+        return send(res, await release.approve(u.pathname.split("/").pop()));
       return send(res, { error: "Not found" }, 404);
     }
     if (req.method !== "GET")
@@ -311,7 +340,7 @@ const web = http.createServer(async (req, res) => {
     if (u.pathname === "/")
       return html(
         res,
-        `<span class="eyebrow">NO BROWSER EXTENSION REQUIRED</span><h1>Your Jiji, connected.</h1><p>Sign in directly on Jiji in the companion browser. Your agents share the connection; your password and cookies stay in that browser.</p><section><h2>Connection</h2><p id="status" role="status">Checking connection…</p><form action="/api/login" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Open Jiji sign-in</button></form><form action="/api/connect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Connect agents</button></form></section><section><h2>Pair ChatGPT, Claude or Grokbot</h2><p>Use this MCP URL in your agent:</p><code>${escape(config.cloudOrigin)}/mcp</code><p>Generate a code for each agent. Enter it only on your MCP server’s connection page.</p><form action="/api/pair" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Generate pairing code</button></form><output id="pairing"></output></section><section><h2>Review changes</h2><p>Agents can prepare messages and account changes. You review their exact contents here before anything is submitted. Preparing a plan sends nothing. Payments, identity uploads and credential changes are completed directly on Jiji.</p></section><form action="/api/disconnect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Disconnect</button></form><p id="result" role="status"></p>`,
+        `<span class="eyebrow">NO BROWSER EXTENSION REQUIRED</span><h1>Your Jiji, connected.</h1><p>Sign in directly on Jiji in the companion browser. Your agents share the connection; your password and cookies stay in that browser.</p><section><h2>Connection</h2><p id="status" role="status">Checking connection…</p><form action="/api/login" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Open Jiji sign-in</button></form><form action="/api/connect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Connect agents</button></form></section><section><h2>Pair ChatGPT, Claude or Grokbot</h2><p>Use this MCP URL in your agent:</p><code>${escape(config.cloudOrigin)}/mcp</code><p>Generate a code for each agent. Enter it only on your MCP server’s connection page.</p><form action="/api/pair" method="post"><input type="hidden" name="csrf" value="${csrf}"><button>Generate pairing code</button></form><output id="pairing"></output></section><section><h2>Review changes</h2><p>Agents can prepare messages and account changes. You review their exact contents here before anything is submitted. Preparing a plan sends nothing unless auto-approve is enabled. Payments, identity uploads and credential changes are completed directly on Jiji.</p>${settings.autoApprove ? `<p><strong>Auto-approve is on.</strong> Prepared messages send immediately through this approval path${Number.isInteger(settings.hourlySendCap) ? `, up to ${settings.hourlySendCap} per hour` : ""}.</p>` : ""}</section><form action="/api/disconnect" method="post"><input type="hidden" name="csrf" value="${csrf}"><button class="secondary">Disconnect</button></form><p id="result" role="status"></p>`,
       );
     return send(res, { error: "Not found" }, 404);
   } catch (e) {

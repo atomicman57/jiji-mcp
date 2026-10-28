@@ -425,10 +425,13 @@ export class JijiBrowser {
           .filter((url) => url && new URL(url).pathname.endsWith(".html")),
       ),
     ];
-    if (listings.length !== 1)
-      throw new Error(
+    if (listings.length !== 1) {
+      const error = new Error(
         "Conversation listing could not be identified uniquely. Nothing was sent.",
       );
+      error.nothingSent = true;
+      throw error;
+    }
     return listings[0];
   }
   async resolveListingTarget(url) {
@@ -504,16 +507,43 @@ export class JijiBrowser {
     );
   }
   async send(plan) {
+    const refused = (message, cause) => {
+      const error = new Error(message);
+      error.nothingSent = true;
+      if (cause) error.cause = cause;
+      throw error;
+    };
     const target = chatUrl(plan.chat_url);
-    if (!target) throw new Error("Invalid conversation target.");
+    if (!target) refused("Invalid conversation target.");
     const chat = new URL(target, "https://jiji.ng");
-    const page = await this.go(chat.pathname);
+    let page;
+    try {
+      page = await this.go(chat.pathname);
+    } catch (e) {
+      refused("Chat page did not open. Nothing was sent.", e);
+    }
     if (chatUrl(page.url()) !== target)
-      throw new Error("Chat target changed. Nothing was sent.");
+      refused("Chat target changed. Nothing was sent.");
     const editor = page.locator(".qa-messenger-send-message-textarea");
-    await editor.waitFor({ timeout: 12000 });
-    if ((await this.conversationListing(page)) !== plan.listing_url)
-      throw new Error(
+    try {
+      await editor.waitFor({ timeout: 12000 });
+    } catch (e) {
+      refused("Message editor was not ready. Nothing was sent.", e);
+    }
+    let listing;
+    try {
+      listing = await this.conversationListing(page);
+    } catch (e) {
+      if (e?.nothingSent === true) throw e;
+      refused(
+        e?.message?.includes("Nothing was sent")
+          ? e.message
+          : "Chat listing could not be checked. Nothing was sent.",
+        e,
+      );
+    }
+    if (listing !== plan.listing_url)
+      refused(
         "Chat listing does not match the approved listing. Nothing was sent.",
       );
     if (plan.offer_amount !== undefined) {
@@ -522,7 +552,7 @@ export class JijiBrowser {
         plan.offer_amount <= 0 ||
         plan.offer_amount > 1e12
       )
-        throw new Error("Invalid native offer amount. Nothing was sent.");
+        refused("Invalid native offer amount. Nothing was sent.");
       const result = await this.catalogRequest({
         path: `/api_web/v1/chat/room/${chat.pathname.split("/").pop()}.json`,
         method: "POST",
