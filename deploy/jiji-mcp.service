@@ -1,0 +1,18 @@
+[Unit]
+Description=Jiji MCP companion
+After=docker.service network-online.target
+Requires=docker.service
+Conflicts=jiji-mcp-signin.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/jiji-mcp/env
+ExecStartPre=/usr/local/sbin/jiji-mcp-init-data
+ExecStartPre=/usr/bin/docker rm -f jiji-mcp
+ExecStart=/usr/bin/docker run --name jiji-mcp --rm --read-only --cap-drop=ALL --security-opt no-new-privileges:true --user 950:950 --network host --tmpfs /tmp:rw,nosuid,size=512m --shm-size=1g -v /var/lib/jiji-mcp:/data --env-file /etc/jiji-mcp/env -e JIJI_SIGNIN=0 -e JIJI_HEADLESS=true jiji-mcp:local
+ExecStop=/usr/bin/docker stop jiji-mcp
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

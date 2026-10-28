@@ -19,6 +19,7 @@ import {
 } from "./message-release.mjs";
 import { loadIdentity } from "./identity.mjs";
 import { socketPath } from "./bridge.mjs";
+import { loopbackBindHost } from "./runtime-policy.mjs";
 import { validatePath } from "./protocol.mjs";
 import { buildAction, buildRead, workflows } from "./catalog.mjs";
 const runtime = path.dirname(socketPath);
@@ -38,7 +39,8 @@ try {
   if (e.code !== "ENOENT") throw e;
 }
 const port = Number(config.port || 38473);
-const origin = `http://127.0.0.1:${port}`;
+const bindHost = loopbackBindHost(process.env.JIJI_BIND_HOST);
+const origin = `http://${bindHost}:${port}`;
 const settings = readSendSettings(process.env, config);
 const browser = new JijiBrowser(path.join(runtime, "browser-profile"));
 const plans = new ApprovalPlans();
@@ -242,7 +244,7 @@ async function read(req) {
 }
 const web = http.createServer(async (req, res) => {
   try {
-    if (req.headers.host !== `127.0.0.1:${port}`)
+    if (req.headers.host !== `${bindHost}:${port}`)
       return send(res, { error: "Host rejected" }, 403);
     const u = new URL(req.url, origin);
     if (req.method === "POST") {
@@ -349,7 +351,7 @@ const web = http.createServer(async (req, res) => {
 });
 await new Promise((resolve, reject) => {
   web.on("error", reject);
-  web.listen(port, "127.0.0.1", resolve);
+  web.listen(port, bindHost, resolve);
 });
 try {
   await fs.stat(socketPath);

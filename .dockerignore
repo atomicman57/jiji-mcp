@@ -1,0 +1,12 @@
+.git
+node_modules
+work
+tests
+*.log
+*.md
+.env
+wrangler.local.jsonc
+deploy/*.service
+deploy/init-data.sh
+deploy/env.example
+deploy/README.md

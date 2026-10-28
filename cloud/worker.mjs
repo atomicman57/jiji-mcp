@@ -1,4 +1,5 @@
 import { socketConnectionId, matchesSocket } from "./socket-identity.mjs";
+import { closeReplacedCompanions } from "./single-bridge.mjs";
 import { withD1Storage, cleanupD1Storage } from "./d1-kv.mjs";
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -256,8 +257,8 @@ export class JijiBridge {
       if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket")
         return json({ error: "Upgrade required" }, 426);
       // Only the authenticated outer Worker can address this installation's Object.
-      for (const old of this.state.getWebSockets("companion"))
-        old.close(4001, "Companion replaced");
+      // A second companion, such as a Mac left running beside Linux, loses the bridge.
+      closeReplacedCompanions(this.state.getWebSockets("companion"));
       const [client, server] = Object.values(new WebSocketPair());
       this.state.acceptWebSocket(server, ["companion"]);
       server.serializeAttachment({
