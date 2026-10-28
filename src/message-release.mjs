@@ -77,7 +77,8 @@ export function projectSendLog(entries, now, dedupeMs) {
       ...prev,
       ...row,
       at: prev.counts ? prev.at : row.at,
-      counts: Boolean(prev.counts || row.counts),
+      // A later outcome can drop a pre-send reservation. Idempotent rows do not.
+      counts: row.revokeCount ? false : Boolean(prev.counts || row.counts),
       target: row.target ?? prev.target,
       text_sha256: row.text_sha256 ?? prev.text_sha256,
       text_length: Object.hasOwn(row, "text_length")
@@ -139,6 +140,19 @@ function rowDigest(row) {
   if (row.text_sha256) return row.text_sha256;
   if (typeof row.text === "string") return messageDigest(row.text).text_sha256;
   return "";
+}
+
+// Sent and uncertain deliveries use a cap slot. A reservation is cleared when
+// nothing was sent, including a plan that expires before the send starts.
+function capOutcome(state, fields) {
+  const counts = state === "sent" || state === "uncertain";
+  return {
+    ...fields,
+    event: "outcome",
+    state,
+    counts,
+    revokeCount: !counts,
+  };
 }
 
 function fingerprint(plan, logText) {
@@ -262,24 +276,12 @@ export function createRelease({ plans, send, log, settings, now = Date.now }) {
     } catch (e) {
       if (!/expired|already handled/.test(e.message)) throw e;
       const current = plans.public(plans.get(id));
-      await record({
-        id,
-        event: "outcome",
-        state: current.state,
-        counts: false,
-        ...fp,
-        error: e.message,
-      });
+      await record(capOutcome(current.state, { id, ...fp, error: e.message }));
       return current;
     }
-    await record({
-      id,
-      event: "outcome",
-      state: outcome.state,
-      counts: false,
-      ...fp,
-      error: outcome.result?.error,
-    });
+    await record(
+      capOutcome(outcome.state, { id, ...fp, error: outcome.result?.error }),
+    );
     return outcome;
   }
   return { approve };

@@ -13,6 +13,7 @@ import {
   finishPreparedMessage,
   messageDigest,
   openSendLog,
+  projectSendLog,
   readSendSettings,
 } from "../src/message-release.mjs";
 import { createServer } from "../src/tools.mjs";
@@ -238,6 +239,67 @@ test("overlapping releases cannot share the last cap slot", async () => {
   finish();
   assert.equal((await first).state, "sent");
   assert.equal(h.calls(), 1);
+});
+
+test("expiry before send does not consume a cap slot", async () => {
+  const h = harness({ cap: 1 });
+  const plan = h.draft();
+  const append = h.log.append.bind(h.log);
+  h.log.append = async (row) => {
+    if (row.event === "attempt" && row.id === plan.id)
+      h.plans.get(plan.id).expires = Date.now() - 1;
+    await append(row);
+  };
+  const expired = await h.release.approve(plan.id);
+  assert.equal(expired.state, "expired");
+  assert.equal(h.calls(), 0);
+  const reserved = projectSendLog(h.log.entries, Date.now(), 600000).find(
+    (row) => row.id === plan.id,
+  );
+  assert.equal(reserved.counts, false);
+  assert.equal(reserved.state, "expired");
+  const sent = await h.release.approve(h.draft({ message: "after expiry" }).id);
+  assert.equal(sent.state, "sent");
+  assert.equal(h.calls(), 1);
+});
+
+test("uncertain delivery uses a cap slot and a pre-send failure does not", async () => {
+  const uncertain = harness({ cap: 1 });
+  uncertain.setBehavior(async () => {
+    throw new Error("Delivery status unknown");
+  });
+  assert.equal(
+    (
+      await uncertain.release.approve(
+        uncertain.draft({ message: "maybe sent" }).id,
+      )
+    ).state,
+    "uncertain",
+  );
+  uncertain.setBehavior(async () => ({ sent: true }));
+  assert.equal(
+    (await uncertain.release.approve(uncertain.draft({ message: "next" }).id))
+      .state,
+    "capped",
+  );
+  assert.equal(uncertain.calls(), 1);
+
+  const failed = harness({ cap: 1 });
+  failed.setBehavior(async () => {
+    const error = new Error("Chat target changed. Nothing was sent.");
+    error.nothingSent = true;
+    throw error;
+  });
+  assert.equal(
+    (await failed.release.approve(failed.draft({ message: "nope" }).id)).state,
+    "failed",
+  );
+  failed.setBehavior(async () => ({ sent: true }));
+  assert.equal(
+    (await failed.release.approve(failed.draft({ message: "yes" }).id)).state,
+    "sent",
+  );
+  assert.equal(failed.calls(), 2);
 });
 
 test("hourly cap blocks the next send and clears on the following hour", async () => {
