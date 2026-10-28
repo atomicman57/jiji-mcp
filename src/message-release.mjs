@@ -1,4 +1,5 @@
 // Message release shares the approval-page path. Preparation itself never sends.
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -12,13 +13,13 @@ const FALSY = new Set(["0", "false", "no", "off"]);
 function defined(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
 }
-function flag(value, fallback) {
+function flag(value, fallback, name) {
   if (!defined(value)) return fallback;
   if (typeof value === "boolean") return value;
   const text = String(value).trim().toLowerCase();
   if (TRUTHY.has(text)) return true;
   if (FALSY.has(text)) return false;
-  throw new Error("JIJI_AUTO_APPROVE must be true or false.");
+  throw new Error(name + " must be true or false.");
 }
 function count(value, fallback, name) {
   if (!defined(value)) return fallback;
@@ -36,6 +37,14 @@ export function readSendSettings(env = {}, config = {}) {
         ? env.JIJI_AUTO_APPROVE
         : config.JIJI_AUTO_APPROVE,
       false,
+      "JIJI_AUTO_APPROVE",
+    ),
+    logText: flag(
+      defined(env.JIJI_SEND_LOG_TEXT)
+        ? env.JIJI_SEND_LOG_TEXT
+        : config.JIJI_SEND_LOG_TEXT,
+      false,
+      "JIJI_SEND_LOG_TEXT",
     ),
     hourlySendCap: count(
       defined(env.JIJI_HOURLY_SEND_CAP)
@@ -71,6 +80,10 @@ export function projectSendLog(entries, now, dedupeMs) {
       at: prev.counts ? prev.at : row.at,
       counts: Boolean(prev.counts || row.counts),
       target: row.target ?? prev.target,
+      text_sha256: row.text_sha256 ?? prev.text_sha256,
+      text_length: Object.hasOwn(row, "text_length")
+        ? row.text_length
+        : prev.text_length,
       text: row.text ?? prev.text,
       offer: Object.hasOwn(row, "offer") ? row.offer : prev.offer,
     });
@@ -115,11 +128,27 @@ export async function openSendLog(file, storage = fs) {
   };
 }
 
-function fingerprint(plan) {
+export function messageDigest(text) {
+  const value = text ?? "";
+  return {
+    text_sha256: createHash("sha256").update(value).digest("hex"),
+    text_length: value.length,
+  };
+}
+
+function rowDigest(row) {
+  if (row.text_sha256) return row.text_sha256;
+  if (typeof row.text === "string") return messageDigest(row.text).text_sha256;
+  return "";
+}
+
+function fingerprint(plan, logText) {
+  const text = plan.message ?? "";
   return {
     target: plan.chat_url || "",
-    text: plan.message ?? "",
     offer: plan.offer_amount === undefined ? null : plan.offer_amount,
+    ...messageDigest(text),
+    ...(logText ? { text } : {}),
   };
 }
 
@@ -142,7 +171,7 @@ export function createRelease({ plans, send, log, settings, now = Date.now }) {
   async function approveOnce(id) {
     const plan = plans.get(id);
     if (plan.type !== "jiji_message") return plans.approve(id, send);
-    const fp = fingerprint(plan);
+    const fp = fingerprint(plan, settings.logText === true);
     if (plan.state !== "pending") {
       const current = plans.public(plan);
       await record({
@@ -170,7 +199,7 @@ export function createRelease({ plans, send, log, settings, now = Date.now }) {
       (row) =>
         row.id !== id &&
         row.target === fp.target &&
-        row.text === fp.text &&
+        rowDigest(row) === fp.text_sha256 &&
         row.offer === fp.offer &&
         row.at >= now() - settings.dedupeMs &&
         ["sending", "sent", "uncertain"].includes(row.state),

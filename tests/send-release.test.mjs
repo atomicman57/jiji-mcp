@@ -11,6 +11,7 @@ import {
   createMemoryLog,
   createRelease,
   finishPreparedMessage,
+  messageDigest,
   openSendLog,
   readSendSettings,
 } from "../src/message-release.mjs";
@@ -83,6 +84,7 @@ test("send settings default off and environment overrides config", () => {
     autoApprove: false,
     hourlySendCap: 12,
     dedupeMs: 600000,
+    logText: false,
   });
   assert.equal(
     readSendSettings({}, { JIJI_AUTO_APPROVE: true, JIJI_HOURLY_SEND_CAP: 3 })
@@ -98,7 +100,7 @@ test("send settings default off and environment overrides config", () => {
       },
       { JIJI_AUTO_APPROVE: true, JIJI_HOURLY_SEND_CAP: 99 },
     ),
-    { autoApprove: false, hourlySendCap: 4, dedupeMs: 1000 },
+    { autoApprove: false, hourlySendCap: 4, dedupeMs: 1000, logText: false },
   );
   assert.throws(
     () => readSendSettings({ JIJI_AUTO_APPROVE: "maybe" }),
@@ -343,7 +345,9 @@ test("the send log is appended and a restarted log still enforces the cap", asyn
     const text = await readFile(file, "utf8");
     assert.match(text, /"event":"attempt"/);
     assert.match(text, /"state":"sent"/);
-    assert.match(text, /Logged send/);
+    assert.match(text, new RegExp(messageDigest("Logged send").text_sha256));
+    assert.match(text, /"text_length":11/);
+    assert.equal(text.includes("Logged send"), false);
     assert.equal((await stat(file)).mode & 0o777, 0o600);
     const reloaded = await openSendLog(file);
     const plans2 = new ApprovalPlans();
@@ -359,6 +363,37 @@ test("the send log is appended and a restarted log still enforces the cap", asyn
     const second = messagePlan(plans2, { message: "Another send" });
     assert.equal((await release2.approve(second.id)).state, "capped");
     assert.equal(calls, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("send log stores message text only when JIJI_SEND_LOG_TEXT is on", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "jiji-send-log-text-"));
+  const message = "Private reply text";
+  try {
+    for (const [logText, file] of [
+      [false, "redacted.jsonl"],
+      [true, "clear.jsonl"],
+    ]) {
+      const log = await openSendLog(path.join(dir, file));
+      const plans = new ApprovalPlans();
+      const release = createRelease({
+        plans,
+        log,
+        settings: {
+          autoApprove: false,
+          hourlySendCap: 5,
+          dedupeMs: 600000,
+          logText,
+        },
+        send: async () => ({ sent: true }),
+      });
+      await release.approve(messagePlan(plans, { message }).id);
+      const text = await readFile(path.join(dir, file), "utf8");
+      assert.match(text, new RegExp(messageDigest(message).text_sha256));
+      assert.equal(text.includes(message), logText);
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -23,6 +23,7 @@ if (!fs.existsSync(configPath))
         JIJI_AUTO_APPROVE: false,
         JIJI_HOURLY_SEND_CAP: 12,
         JIJI_SEND_DEDUPE_MS: 600000,
+        JIJI_SEND_LOG_TEXT: false,
       },
       null,
       2,
