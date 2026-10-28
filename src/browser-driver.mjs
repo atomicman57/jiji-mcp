@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import fs from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { validatePath, listingUrl, chatUrl } from "./protocol.mjs";
+import { browserLaunchOptions } from "./runtime-policy.mjs";
 import {
   buildRead,
   buildAction,
@@ -40,11 +41,10 @@ export class JijiBrowser {
     }
     await fs.mkdir(this.profile, { recursive: true, mode: 0o700 });
     await fs.chmod(this.profile, 0o700);
-    this.context = await chromium.launchPersistentContext(this.profile, {
-      channel: "chrome",
-      headless: false,
-      viewport: null,
-    });
+    this.context = await chromium.launchPersistentContext(
+      this.profile,
+      browserLaunchOptions(process.env),
+    );
     this.context.on("close", () => {
       this.context = null;
       this.page = null;

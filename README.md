@@ -128,6 +128,10 @@ Set these in the companion application-data `config.json`, or as environment var
 
 Every release attempt is appended to `send-log.jsonl` in the companion application-data directory, mode `0600`. By default the log stores the target, outcome, message length, and a SHA-256 of the message, not the message text. Set `JIJI_SEND_LOG_TEXT=true` to store the text as well. Restart the companion after changing these settings. Auto-approve of the existing prepare tools runs in the companion, so a companion restart is enough for that behavior. `jiji_send_prepared` is a new tool: a local MCP client sees it on its next process start, and agents that connect through the hosted relay see it only after that relay worker is redeployed. D1 and Durable Object bindings do not change.
 
+## Linux server
+
+The companion can run headless on Linux and dial out to the same relay. No tunnel is required. The approve page stays on `127.0.0.1`. Sign-in is a separate one-time unit. See [deploy/README.md](deploy/README.md) for the container, systemd units, and cutover checklist. Do not copy the Mac browser profile.
+
 ## Development and tests
 
 ```sh
