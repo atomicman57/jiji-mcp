@@ -14,13 +14,13 @@ This project is not affiliated with Jiji. Undocumented endpoints and page select
 | `jiji_seller_contact`, `jiji_whatsapp_handoff`                                     | One selected seller's contacts and a WhatsApp handoff package; no automatic outreach                                               |
 | `jiji_list_conversations`, `jiji_read_conversation`                                | Your inbox previews and recent conversation messages                                                                               |
 | `jiji_saved_listings`                                                              | Read your existing saved listings                                                                                                  |
-| `jiji_prepare_message`, `jiji_prepare_conversation_message`, `jiji_message_status` | Prepare an exact message/native price offer, review it locally, and check its outcome                                              |
+| `jiji_prepare_message`, `jiji_prepare_conversation_message`, `jiji_send_prepared`, `jiji_message_status` | Prepare an exact message/native price offer, optionally release it, and check its outcome |
 | `jiji_capabilities`                                                                | Discover every mapped resource, action schema and browser workflow                                                                 |
 | `jiji_account_data`                                                                | Read profile/business settings, adverts/forms, saved searches, notifications, feedback, orders, statistics and billing information |
 | `jiji_prepare_action`, `jiji_prepare_advert`, `jiji_action_status`                 | Prepare exact account changes or advert submissions for local approval and inspect their outcomes                                  |
 | `jiji_open_workflow`, `jiji_inspect_workflow`                                      | Open mapped Jiji workflows and inspect ordinary forms; sensitive workflows remain owner handoffs                                   |
 
-There are 22 MCP tools. There is no MCP send/approve tool. `jiji_prepare_message` returns a local approval page showing the exact seller, listing and message. `jiji_prepare_conversation_message` takes an inbox `key` and exact `message` to prepare a reply to that existing conversation through the same approval page. Expired or ambiguous references fail without sending; list conversations again. Only the owner can submit that page. Each plan expires after ten minutes and can be used once. An uncertain result is not retried automatically. Payments, media uploads, identity verification and credential changes are completed directly on Jiji through owner workflows. Account changes use the same local approval boundary.
+There are 23 MCP tools. By default, `jiji_prepare_message` returns a local approval page showing the exact seller, listing and message, and sends nothing. `jiji_prepare_conversation_message` takes an inbox `key` and exact `message` to prepare a reply to that existing conversation through the same approval page. Expired or ambiguous references fail without sending; list conversations again. Only the owner can submit that page, unless the companion opt-in below is on. Each plan expires after ten minutes. Releasing an id sends at most once. An uncertain result is not retried automatically. `jiji_send_prepared` releases one already pending message through that same approval path. Payments, media uploads, identity verification and credential changes are completed directly on Jiji through owner workflows. Account changes keep the local approval page and are not auto-approved.
 
 Listing preparation resolves existing chat rooms by the exact advert URL returned by Jiji’s room inventory, including listings whose `message_url` opens a message form. Conversation replies and approved sends use the active room’s advert header, so appended prices and links quoted inside messages cannot change the listing target. Ambiguous or unavailable targets still fail without sending.
 
@@ -94,7 +94,7 @@ Enable the cloud relay in the application-data `config.json` printed by the inst
 3. Enter that one-time code on the MCP server's connection page and approve the displayed access. To use the account catalog, explicitly enable the separate account-features checkbox. Older grants retain their earlier access until reconnected.
 4. Follow **Continue to your agent**. Repeat with a fresh code for each agent.
 
-OAuth connects an agent to your companion; Jiji sign-in happens only in the dedicated Jiji browser. Each companion/server origin has a separate random 256-bit identity. Pairing codes expire in ten minutes and are consumed once. The relay isolates users and stores no Jiji passwords or cookies. A cloud agent cannot approve a message or account change through an MCP call. Expanded private account access is recorded in the OAuth grant; a client cannot enable it with a request header.
+OAuth connects an agent to your companion; Jiji sign-in happens only in the dedicated Jiji browser. Each companion/server origin has a separate random 256-bit identity. Pairing codes expire in ten minutes and are consumed once. The relay isolates users and stores no Jiji passwords or cookies. A cloud agent cannot approve an account change through an MCP call. Message release is described under Message release settings. Expanded private account access is recorded in the OAuth grant; a client cannot enable it with a request header.
 
 The optional credential-helper CLI reads/writes a document named `jiji-mcp-companion` in an encrypted store. It must support `list-documents --prefix NAME` and `get-document NAME` with JSON on stdout, plus `put-document NAME` with JSON on stdin. The document contains an `identities` object keyed by HTTPS origin. The application pipes these values internally and never logs them. Local MCP tools do not need a credential helper or cloud identity.
 
@@ -112,6 +112,20 @@ npx wrangler deploy --config wrangler.local.jsonc --durable-objects-code-update-
 ```
 
 The Worker uses Cloudflare D1 and per-user Durable Objects, plus `@cloudflare/workers-oauth-provider`. Configure `PUBLIC_ORIGIN` for a custom domain. Companions use hibernating WebSockets; hosting usage costs and limits apply to the operator. Never commit credentials, browser profiles or personal deployment configuration.
+
+## Message release settings
+
+Set these in the companion application-data `config.json`, or as environment variables. An environment variable wins when it is set. The defaults keep today’s approval page.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `JIJI_AUTO_APPROVE` | `false` | When `true`, `jiji_prepare_message` and `jiji_prepare_conversation_message` send immediately through the same function as the local Approve button. When `false`, those tools stay pending and return `approval_url`. |
+| `JIJI_HOURLY_SEND_CAP` | `12` | Message-send attempts allowed in a rolling hour. The attempt that would exceed it returns state `capped` with `blocked` and `limited`, and sends nothing. `0` blocks every send. |
+| `JIJI_SEND_DEDUPE_MS` | `600000` | Identical message text, including the same native offer amount, is not sent again to the same chat inside this window. The new id returns state `duplicate` and sends nothing. |
+
+`jiji_send_prepared` takes a pending message id and calls that same approval function. Calling it again for an id that is already `sending`, `sent`, `failed`, `uncertain`, `expired`, `capped`, or `duplicate` does not send. A timeout or any other ambiguous failure after the request may have left the machine is `uncertain` and is never retried. A failure that is known not to have sent is `failed`, and that same id is still not retried. `jiji_message_status` reports these states.
+
+Every release attempt is appended to `send-log.jsonl` in the companion application-data directory, mode `0600`. The log contains the message text, target, and outcome. Restart the companion after changing these settings. Auto-approve of the existing prepare tools runs in the companion, so a companion restart is enough for that behavior. `jiji_send_prepared` is a new tool: a local MCP client sees it on its next process start, and agents that connect through the hosted relay see it only after that relay worker is redeployed. D1 and Durable Object bindings do not change.
 
 ## Development and tests
 

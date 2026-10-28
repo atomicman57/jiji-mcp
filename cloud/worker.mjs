@@ -313,6 +313,7 @@ export class JijiBridge {
             "prepare_message",
             "resolve_listing_target",
             "prepare_conversation_message",
+            "send_prepared",
             "plan_status",
           ].includes(m.action)
         )

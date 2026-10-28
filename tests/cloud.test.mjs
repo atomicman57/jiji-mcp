@@ -207,7 +207,7 @@ test(
           body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
         });
       const list = await (await rpc("tools/list", {})).json();
-      assert.equal(list.result.tools.length, 22);
+      assert.equal(list.result.tools.length, 23);
       // Reply preparation travels through the relay; the mocked companion only
       // returns a pending plan. No human approval or Jiji mutation is performed.
       const reply = rpc("tools/call", {

@@ -67,7 +67,7 @@ test("MCP lists tools, paginates with authoritative URL, and reads details", asy
     };
   });
   try {
-    assert.equal((await x.client.listTools()).tools.length, 22);
+    assert.equal((await x.client.listTools()).tools.length, 23);
     const call = async (name, args) => {
       const result = await x.client.callTool({ name, arguments: args });
       const data = JSON.parse(result.content[0].text);

@@ -134,7 +134,7 @@ export function registerFeatures(register, request, fetchJSON) {
   );
   register(
     "jiji_prepare_message",
-    "Prepare an exact seller message or native price offer for local owner review. Never sends by itself. The owner reviews the seller, listing, exact text and any offer amount on the companion approval page; there is no agent-callable send/approve tool. Media uploads remain in the owner’s Jiji browser.",
+    "Prepare an exact seller message or native price offer. By default this only stores a local approval plan and sends nothing. When the companion setting JIJI_AUTO_APPROVE is on, the same approval path used by the local Approve button sends it immediately. Media uploads remain in the owner’s Jiji browser.",
     {
       guid,
       message: z.string().min(1).max(4000).optional(),
@@ -180,7 +180,7 @@ export function registerFeatures(register, request, fetchJSON) {
   );
   register(
     "jiji_prepare_conversation_message",
-    "Prepare an exact text reply to an existing conversation key returned by jiji_list_conversations. Sends nothing. Returns the same local human approval page as jiji_prepare_message; only the owner can approve and send once.",
+    "Prepare an exact text reply to an existing conversation key returned by jiji_list_conversations. By default it returns the same local approval page as jiji_prepare_message and sends nothing. When JIJI_AUTO_APPROVE is on, that same approval path sends it immediately.",
     {
       key: z.string().regex(/^[a-f0-9]{24}$/),
       message: z
@@ -199,8 +199,20 @@ export function registerFeatures(register, request, fetchJSON) {
     },
   );
   register(
+    "jiji_send_prepared",
+    "Release one pending prepared message through the companion’s approval path, the same path as the local Approve button. Sends only while that id is still pending. Repeating an id, a duplicate of text already sent to that chat, or a send past the hourly cap does not send again. Uncertain delivery is never retried.",
+    { id: z.string().uuid() },
+    ({ id }) => request({ action: "send_prepared", id }),
+    {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  );
+  register(
     "jiji_message_status",
-    "Check a prepared message’s local approval/send status. Does not approve or send it.",
+    "Check a prepared message’s local approval/send status. Reports pending, sending, sent, failed, uncertain, expired, capped, or duplicate. Does not approve or send it.",
     { id: z.string().uuid() },
     ({ id }) => request({ action: "plan_status", id }),
   );
