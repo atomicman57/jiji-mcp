@@ -120,7 +120,7 @@ Set these in the companion application-data `config.json`, or as environment var
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `JIJI_AUTO_APPROVE` | `false` | When `true`, `jiji_prepare_message` and `jiji_prepare_conversation_message` send immediately through the same function as the local Approve button. When `false`, those tools stay pending and return `approval_url`. |
-| `JIJI_HOURLY_SEND_CAP` | `12` | Message-send attempts allowed in a rolling hour. The attempt that would exceed it returns state `capped` with `blocked` and `limited`, and sends nothing. `0` blocks every send. |
+| `JIJI_HOURLY_SEND_CAP` | unset | Optional. When unset, message sends are not limited by the hour. When set to a number, the attempt that would exceed it returns state `capped` with `blocked` and `limited`, and sends nothing. `0` blocks every send. |
 | `JIJI_SEND_DEDUPE_MS` | `600000` | Identical message text, including the same native offer amount, is not sent again to the same chat inside this window. The new id returns state `duplicate` and sends nothing. |
 | `JIJI_SEND_LOG_TEXT` | `false` | When `false`, `send-log.jsonl` stores a SHA-256 of the message and its length. When `true`, the log also stores the message text. |
 

@@ -32,7 +32,7 @@ function messagePlan(plans, extra = {}) {
 }
 
 function harness({
-  cap = 12,
+  cap = null,
   dedupeMs = 10 * 60 * 1000,
   clock = Date.now(),
 } = {}) {
@@ -82,7 +82,7 @@ async function waitFor(fn) {
 test("send settings default off and environment overrides config", () => {
   assert.deepEqual(readSendSettings(), {
     autoApprove: false,
-    hourlySendCap: 12,
+    hourlySendCap: null,
     dedupeMs: 600000,
     logText: false,
   });
@@ -110,6 +110,42 @@ test("send settings default off and environment overrides config", () => {
     () => readSendSettings({ JIJI_HOURLY_SEND_CAP: "-1" }),
     /non-negative/,
   );
+});
+
+test("an unset hourly cap does not limit sends, and a set cap does", async () => {
+  assert.equal(readSendSettings().hourlySendCap, null);
+  assert.equal(
+    readSendSettings({ JIJI_HOURLY_SEND_CAP: "" }).hourlySendCap,
+    null,
+  );
+  assert.equal(
+    readSendSettings({}, { JIJI_HOURLY_SEND_CAP: 2 }).hourlySendCap,
+    2,
+  );
+  const open = harness();
+  for (let i = 0; i < 13; i++) {
+    assert.equal(
+      (await open.release.approve(open.draft({ message: "open " + i }).id))
+        .state,
+      "sent",
+    );
+  }
+  assert.equal(open.calls(), 13);
+  const limited = harness({ cap: 2 });
+  assert.equal(
+    (await limited.release.approve(limited.draft({ message: "one" }).id)).state,
+    "sent",
+  );
+  assert.equal(
+    (await limited.release.approve(limited.draft({ message: "two" }).id)).state,
+    "sent",
+  );
+  const blocked = await limited.release.approve(
+    limited.draft({ message: "three" }).id,
+  );
+  assert.equal(blocked.state, "capped");
+  assert.equal(blocked.limited, true);
+  assert.equal(limited.calls(), 2);
 });
 
 test("auto-approve off stays pending and on sends through the approval function", async () => {

@@ -47,7 +47,7 @@ test("extension-free companion has a private socket and rejects cross-site appro
     assert.equal(status.extension_required, false);
     assert.equal(status.browser_open, false);
     assert.equal(status.auto_approve, false);
-    assert.equal(status.hourly_send_cap, 12);
+    assert.equal(status.hourly_send_cap, null);
     const accountPlan = await bridgeRequest(
       {
         action: "prepare_action",

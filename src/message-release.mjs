@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const HOUR_MS = 60 * 60 * 1000;
-export const DEFAULT_HOURLY_SEND_CAP = 12;
 export const DEFAULT_DEDUPE_MS = 10 * 60 * 1000;
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
@@ -50,7 +49,7 @@ export function readSendSettings(env = {}, config = {}) {
       defined(env.JIJI_HOURLY_SEND_CAP)
         ? env.JIJI_HOURLY_SEND_CAP
         : config.JIJI_HOURLY_SEND_CAP,
-      DEFAULT_HOURLY_SEND_CAP,
+      null,
       "JIJI_HOURLY_SEND_CAP",
     ),
     dedupeMs: count(
@@ -226,7 +225,10 @@ export function createRelease({ plans, send, log, settings, now = Date.now }) {
     const used = recent.filter(
       (row) => row.counts && row.at >= now() - HOUR_MS,
     ).length;
-    if (used >= settings.hourlySendCap) {
+    if (
+      Number.isInteger(settings.hourlySendCap) &&
+      used >= settings.hourlySendCap
+    ) {
       plan.state = "capped";
       plan.result = {
         blocked: true,
