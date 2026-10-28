@@ -101,6 +101,15 @@ test("extension-free companion has a private socket and rejects cross-site appro
     );
     assert.equal(plan.state, "pending");
     assert.match(plan.approval_url, /\/approve\//);
+    await assert.rejects(
+      bridgeRequest({ action: "send_prepared", id: plan.id }, socket),
+      /JIJI_AUTO_APPROVE=true/,
+    );
+    assert.equal(
+      (await bridgeRequest({ action: "plan_status", id: plan.id }, socket))
+        .state,
+      "pending",
+    );
     const review = await (
       await fetch(plan.approval_url, { headers: { Cookie: cookie } })
     ).text();

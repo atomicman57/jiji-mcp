@@ -15,6 +15,7 @@ import {
   finishPreparedMessage,
   openSendLog,
   readSendSettings,
+  releasePrepared,
 } from "./message-release.mjs";
 import { loadIdentity } from "./identity.mjs";
 import { socketPath } from "./bridge.mjs";
@@ -133,10 +134,14 @@ async function action(m) {
     );
   }
   if (m.action === "send_prepared") {
+    if (!settings.autoApprove)
+      await releasePrepared(settings.autoApprove, release, m.id);
     const existing = plans.get(m.id);
     if (existing.type !== "jiji_message")
       throw new Error("Only a prepared message can be released.");
-    return publicPlan(await release.approve(existing.id));
+    return publicPlan(
+      await releasePrepared(settings.autoApprove, release, existing.id),
+    );
   }
   if (m.action === "plan_status")
     return publicPlan(plans.public(plans.get(m.id)));

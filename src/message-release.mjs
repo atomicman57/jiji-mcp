@@ -291,3 +291,11 @@ export async function finishPreparedMessage(autoApprove, prepared, release) {
   if (!autoApprove) return prepared;
   return release.approve(prepared.id);
 }
+
+export const SEND_PREPARED_DISABLED =
+  "jiji_send_prepared requires JIJI_AUTO_APPROVE=true on the companion. Approve this message on the local approval page.";
+
+export async function releasePrepared(autoApprove, release, id) {
+  if (!autoApprove) throw new Error(SEND_PREPARED_DISABLED);
+  return release.approve(id);
+}

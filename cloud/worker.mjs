@@ -56,7 +56,7 @@ async function authorize(req, env) {
     if (auth.scope.some((s) => !["jiji:read", "offline_access"].includes(s)))
       return json({ error: "Unsupported permission" }, 400);
     return html(
-      `<h1>Connect Jiji to your agent</h1><p><strong>${escape(info.clientName)}</strong> wants to use your Jiji companion for listing research, selected seller contacts and your private Jiji conversations.</p><p>Return address: ${escape(info.redirectHost)}. The client name may be self-registered.</p><p>Open the Jiji MCP companion and choose <strong>Generate pairing code</strong>. Enter its one-time pairing code below. Only continue if you started this connection.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label>Pairing code<input name="code" autocomplete="off" spellcheck="false" required maxlength="32"></label><p>Allows listing research, selected seller contacts, private chat reading and message drafts. Your Jiji password, cookies and verification codes stay in your companion browser. Messages require separate local approval; payments are completed directly on Jiji.</p><label><input type="checkbox" name="account_access" value="yes"> Also allow account features: profile/business settings, own adverts, notifications, feedback, orders, balance/history and campaign information; prepare changes for local owner approval. This expands private-data access.</label><button name="decision" value="approve">Connect agent</button><button name="decision" value="deny" formnovalidate>Cancel</button></form>`,
+      `<h1>Connect Jiji to your agent</h1><p><strong>${escape(info.clientName)}</strong> wants to use your Jiji companion for listing research, selected seller contacts and your private Jiji conversations.</p><p>Return address: ${escape(info.redirectHost)}. The client name may be self-registered.</p><p>Open the Jiji MCP companion and choose <strong>Generate pairing code</strong>. Enter its one-time pairing code below. Only continue if you started this connection.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><label>Pairing code<input name="code" autocomplete="off" spellcheck="false" required maxlength="32"></label><p>Allows listing research, selected seller contacts, private chat reading and message drafts. Your Jiji password, cookies and verification codes stay in your companion browser. Messages stay on the companion approval page unless the owner has set JIJI_AUTO_APPROVE; payments are completed directly on Jiji.</p><label><input type="checkbox" name="account_access" value="yes"> Also allow account features: profile/business settings, own adverts, notifications, feedback, orders, balance/history and campaign information; prepare changes for local owner approval. This expands private-data access.</label><button name="decision" value="approve">Connect agent</button><button name="decision" value="deny" formnovalidate>Cancel</button></form>`,
       consent.headers,
     );
   }
@@ -313,6 +313,7 @@ export class JijiBridge {
             "prepare_message",
             "resolve_listing_target",
             "prepare_conversation_message",
+            // The companion refuses this unless JIJI_AUTO_APPROVE is on.
             "send_prepared",
             "plan_status",
           ].includes(m.action)
