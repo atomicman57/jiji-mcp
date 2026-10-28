@@ -15,6 +15,7 @@ import {
   openSendLog,
   projectSendLog,
   readSendSettings,
+  releasePrepared,
 } from "../src/message-release.mjs";
 import { createServer } from "../src/tools.mjs";
 
@@ -172,6 +173,29 @@ test("auto-approve off stays pending and on sends through the approval function"
   assert.equal(on.calls(), 1);
   const repeat = await on.release.approve(draft.id);
   assert.equal(repeat.state, "sent");
+  assert.equal(on.calls(), 1);
+});
+
+test("jiji_send_prepared refuses unless JIJI_AUTO_APPROVE is on", async () => {
+  const off = harness();
+  const pending = off.draft();
+  await assert.rejects(
+    releasePrepared(false, off.release, pending.id),
+    /JIJI_AUTO_APPROVE=true/,
+  );
+  assert.equal(off.calls(), 0);
+  assert.equal(off.plans.get(pending.id).state, "pending");
+  const on = harness();
+  const plan = on.draft();
+  assert.equal(
+    (await releasePrepared(true, on.release, plan.id)).state,
+    "sent",
+  );
+  assert.equal(on.calls(), 1);
+  assert.equal(
+    (await releasePrepared(true, on.release, plan.id)).state,
+    "sent",
+  );
   assert.equal(on.calls(), 1);
 });
 
@@ -508,9 +532,15 @@ test("companion and worker share one message release path", () => {
   );
   assert.equal([...companion.matchAll(/browser\.send\(/g)].length, 1);
   assert.equal(companion.includes("plans.approve"), false);
-  assert.equal([...companion.matchAll(/release\.approve\(/g)].length, 2);
+  assert.equal([...companion.matchAll(/release\.approve\(/g)].length, 1);
+  assert.match(companion, /releasePrepared\(settings\.autoApprove/);
   assert.match(companion, /finishPreparedMessage\(settings\.autoApprove/);
   assert.match(worker, /"send_prepared"/);
+  assert.match(worker, /unless the owner has set JIJI_AUTO_APPROVE/);
+  assert.equal(
+    worker.includes("Messages require separate local approval"),
+    false,
+  );
 });
 
 test("MCP send_prepared and message status forward release states", async () => {

@@ -200,7 +200,7 @@ export function registerFeatures(register, request, fetchJSON) {
   );
   register(
     "jiji_send_prepared",
-    "Release one pending prepared message through the companion’s approval path, the same path as the local Approve button. Sends only while that id is still pending. Repeating an id, a duplicate of text already sent to that chat, or a send past the hourly cap does not send again. Uncertain delivery is never retried.",
+    "Release one pending prepared message through the companion’s approval path. Refuses unless the owner set JIJI_AUTO_APPROVE=true; otherwise the local Approve page is the only release. When enabled, sends only while that id is still pending. Repeating an id does not send again. Uncertain delivery is never retried.",
     { id: z.string().uuid() },
     ({ id }) => request({ action: "send_prepared", id }),
     {
