@@ -11,6 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  AD_STATUS_DEDUPE_MS,
+  AD_STATUS_LOOSE_DEDUPE_MS,
   AlertOutbox,
   DEFAULT_OUTBOX_MAX,
   DEFAULT_POLL_MS,
@@ -1171,6 +1173,115 @@ test("an unusable state directory is reported without the error message", async 
       /^Push state directory is unusable \(E[A-Z]+\)\.$/,
     );
     assert.ok(!lines.join("\n").includes(file));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// --- Cross-poll ad status dedupe ---------------------------------------------
+
+const approval = (id, extra = {}) => ({
+  id,
+  type: "advert_approved",
+  text: "Your ad was approved",
+  advert: { id: 99, title: "Car" },
+  ...extra,
+});
+const car = (status) => ({ id: 99, status, title: "Car" });
+// Runs polls in order, threading state, and returns every alert's event id.
+function polls(reads, start = 1000, step = 60_000) {
+  let state = fresh();
+  const ids = [];
+  reads.forEach((r, i) => {
+    const out = detectEvents(state, r, start + i * step);
+    state = out.next;
+    ids.push(...out.events.map((e) => e.event_id));
+  });
+  return { ids, state };
+}
+
+test("my_adverts then a later approval notification alerts once", () => {
+  const { ids } = polls([
+    { notifications: [], adverts: [car("on_review")] },
+    { notifications: [], adverts: [car("active")] },
+    { notifications: [approval(8)], adverts: [car("active")] },
+  ]);
+  assert.deepEqual(ids, ["jiji:ad_status:99:1"]);
+});
+
+test("an approval notification then a later my_adverts transition alerts once", () => {
+  const { ids } = polls([
+    { notifications: [], adverts: [car("on_review")] },
+    { notifications: [approval(8)], adverts: [car("on_review")] },
+    { notifications: [approval(8)], adverts: [car("active")] },
+  ]);
+  assert.deepEqual(ids, ["jiji:notification:8"]);
+});
+
+test("a recorded approval does not hide a later rejection or a later approval", () => {
+  const { ids } = polls([
+    { notifications: [], adverts: [car("on_review")] },
+    { notifications: [approval(8)], adverts: [car("on_review")] },
+    { notifications: [approval(8)], adverts: [car("active")] },
+    { notifications: [approval(8)], adverts: [car("declined")] },
+    {
+      notifications: [
+        approval(8),
+        approval(9, { type: "advert_declined", text: "Your ad was declined" }),
+      ],
+      adverts: [car("declined")],
+    },
+    { notifications: [approval(8)], adverts: [car("active")] },
+  ]);
+  assert.deepEqual(ids, [
+    "jiji:notification:8",
+    "jiji:ad_status:99:2",
+    "jiji:ad_status:99:3",
+  ]);
+});
+
+test("ad status pairing expires: known outcomes after 48h, unknown after 6h", () => {
+  const later = (to, gap) => {
+    const { state } = polls([
+      { notifications: [], adverts: [car("on_review")] },
+      { notifications: [], adverts: [car(to)] },
+    ]);
+    return detectEvents(
+      state,
+      { notifications: [approval(8)], adverts: [car(to)] },
+      61_000 + gap,
+    ).events.length;
+  };
+  assert.equal(later("active", AD_STATUS_DEDUPE_MS - 1), 0);
+  assert.equal(later("active", AD_STATUS_DEDUPE_MS), 1);
+  // "status_7" has no known outcome, so it pairs only within the loose window.
+  assert.equal(later("status_7", AD_STATUS_LOOSE_DEDUPE_MS - 1), 0);
+  assert.equal(later("status_7", AD_STATUS_LOOSE_DEDUPE_MS), 1);
+});
+
+test("ad status pairing survives a restart; bad entries are dropped on load", async () => {
+  const dir = await tmp();
+  try {
+    const { state } = polls([
+      { notifications: [], adverts: [car("on_review")] },
+      { notifications: [], adverts: [car("active")] },
+    ]);
+    let store = new PushStore(dir, { now: () => 61_000 });
+    assert.equal(store.commit(state, []).result, "accepted");
+    const file = path.join(dir, "push-state.json");
+    const saved = JSON.parse(await readFile(file, "utf8"));
+    assert.deepEqual(Object.keys(saved.adStatus), ["jiji:ad_status:99:1"]);
+    saved.adStatus.bad = { advert: "", via: "x", outcome: 1, at: "y" };
+    await writeFile(file, JSON.stringify(saved));
+    store = new PushStore(dir, { now: () => 121_000 });
+    const loaded = store.snapshot();
+    assert.deepEqual(Object.keys(loaded.adStatus), ["jiji:ad_status:99:1"]);
+    const { events } = detectEvents(
+      loaded,
+      { notifications: [approval(8)], adverts: [car("active")] },
+      121_000,
+    );
+    assert.deepEqual(events, []);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

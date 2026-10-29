@@ -18,6 +18,13 @@ export const OUTBOX_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // Delivered event ids, and rooms/notifications/adverts not observed for this
 // long, are forgotten. Anything still listed by Jiji is refreshed every poll.
 export const SEEN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+// One ad status change can reach both my_adverts and notifications, in either
+// order and in different polls. Each ad_status alert sent is remembered this
+// long so its counterpart from the other source is dropped. When either side's
+// outcome (approved, rejected, under review) is unknown, they pair only within
+// the shorter window.
+export const AD_STATUS_DEDUPE_MS = 48 * 60 * 60 * 1000;
+export const AD_STATUS_LOOSE_DEDUPE_MS = 6 * 60 * 60 * 1000;
 export const ALERT_TIMEOUT_MS = 20000;
 export const PREVIEW_MAX = 280;
 // Page cap for every paged push read (chat rooms, notifications, adverts).
@@ -311,6 +318,7 @@ const emptyState = () => ({
   rooms: {},
   notifications: {},
   adverts: {},
+  adStatus: {},
   seen: {},
   outbox: [],
 });
@@ -373,6 +381,14 @@ export class PushStore {
         adverts: cleanMap(
           parsed.adverts,
           (v) => atMap(v) && nonEmpty(v.status) && Number.isInteger(v.rev),
+        ),
+        adStatus: cleanMap(
+          parsed.adStatus,
+          (v) =>
+            atMap(v) &&
+            nonEmpty(v.advert) &&
+            AD_STATUS_SOURCES.has(v.via) &&
+            (v.outcome === null || AD_OUTCOMES.has(v.outcome)),
         ),
         seen: cleanMap(parsed.seen, finite),
         outbox,
@@ -445,6 +461,7 @@ export class PushStore {
       rooms: next.rooms,
       notifications: next.notifications,
       adverts: next.adverts,
+      adStatus: next.adStatus ?? {},
       seen,
       outbox: [
         ...this.state.outbox,
@@ -851,6 +868,36 @@ function payload(type, eventId, occurredAt, summary, data) {
   };
 }
 
+// Coarse outcome of an ad status, so an approval never cancels a later
+// rejection. Rejection words are checked first: "declined after moderation".
+const AD_OUTCOMES = new Set(["rejected", "approved", "review"]);
+const AD_STATUS_SOURCES = new Set(["my_adverts", "notifications"]);
+function adOutcome(text) {
+  if (typeof text !== "string") return null;
+  if (/reject|declin|block|banned/i.test(text)) return "rejected";
+  if (/inactiv|deactiv/i.test(text)) return null;
+  if (/approv|publish|activ|\blive\b/i.test(text)) return "approved";
+  if (/review|moderat|pending/i.test(text)) return "review";
+  return null;
+}
+
+// Drops an ad_status alert whose counterpart from the other source was sent
+// recently, consuming that record so it pairs once. Otherwise records it.
+function pairAdStatus(recent, event, outcome, now) {
+  const advert = event.data.advert_id;
+  for (const [key, r] of Object.entries(recent)) {
+    if (r.advert !== advert || r.via === event.data.via) continue;
+    const known = r.outcome !== null && outcome !== null;
+    if (known && r.outcome !== outcome) continue;
+    if (now - r.at >= (known ? AD_STATUS_DEDUPE_MS : AD_STATUS_LOOSE_DEDUPE_MS))
+      continue;
+    delete recent[key];
+    return false;
+  }
+  recent[event.event_id] = { advert, via: event.data.via, outcome, at: now };
+  return true;
+}
+
 const forget = (map, now) =>
   Object.fromEntries(
     Object.entries(map).filter(([, v]) => now - v.at < SEEN_RETENTION_MS),
@@ -978,27 +1025,37 @@ export function detectEvents(state, reads, now) {
     next.baselined.adverts = true;
   }
   // One approval can show up as both an advert status change and a
-  // notification in the same poll. Keep the my_adverts transition only.
-  const adverts = new Set(
-    events
-      .filter((e) => e.data.via === "my_adverts")
-      .map((e) => e.data.advert_id),
+  // notification. In the same poll the my_adverts transition always wins;
+  // across polls whichever alerted first wins (see AD_STATUS_DEDUPE_MS).
+  const recent = Object.fromEntries(
+    Object.entries(state.adStatus ?? {}).filter(
+      ([, r]) => now - r.at < AD_STATUS_DEDUPE_MS,
+    ),
   );
+  const isAd = (e, via) =>
+    e.type === "ad_status" && e.data.via === via && e.data.advert_id;
+  const dropped = new Set();
+  const changed = new Set();
+  for (const e of events.filter((e) => isAd(e, "my_adverts"))) {
+    changed.add(e.data.advert_id);
+    if (!pairAdStatus(recent, e, adOutcome(e.data.to), now)) dropped.add(e);
+  }
+  for (const e of events.filter((e) => isAd(e, "notifications")))
+    if (
+      changed.has(e.data.advert_id) ||
+      !pairAdStatus(
+        recent,
+        e,
+        adOutcome(`${e.data.kind ?? ""} ${e.data.text ?? ""}`),
+        now,
+      )
+    )
+      dropped.add(e);
+  next.adStatus = recent;
   next.rooms = forget(next.rooms, now);
   next.notifications = forget(next.notifications, now);
   next.adverts = forget(next.adverts, now);
-  return {
-    next,
-    events: events.filter(
-      (e) =>
-        !(
-          e.type === "ad_status" &&
-          e.data.via === "notifications" &&
-          e.data.advert_id &&
-          adverts.has(e.data.advert_id)
-        ),
-    ),
-  };
+  return { next, events: events.filter((e) => !dropped.has(e)) };
 }
 
 // --- Polling -------------------------------------------------------------------
