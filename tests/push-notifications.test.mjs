@@ -1,0 +1,787 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  mkdtemp,
+  readFile,
+  writeFile,
+  readdir,
+  stat,
+  rm,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  AlertOutbox,
+  DEFAULT_OUTBOX_MAX,
+  DEFAULT_POLL_MS,
+  MAX_POLL_MS,
+  MIN_POLL_MS,
+  OUTBOX_MAX_AGE_MS,
+  PUSH_READS,
+  PushStore,
+  backoffSeconds,
+  detectEvents,
+  isNonPublicHost,
+  pollJiji,
+  readPushConfig,
+  resolvesPublic,
+  sendAlert,
+  startPushNotifications,
+} from "../src/push-notifications.mjs";
+
+const URL_OK =
+  "https://api2.cursor.sh/automations/webhook/1234-uuid?k=query-secret";
+const SECRET = "Bearer sk-push-secret-value";
+const env = (extra = {}) => ({
+  JIJI_PUSH_WEBHOOK_URL: URL_OK,
+  JIJI_PUSH_WEBHOOK_AUTH_VALUE: SECRET,
+  ...extra,
+});
+const publicDns = async () => [{ address: "93.184.216.34", family: 4 }];
+const tmp = () => mkdtemp(path.join(tmpdir(), "jiji-push-test-"));
+function recorder() {
+  const lines = [];
+  const log = (level, message, fields = {}) =>
+    lines.push(`${level} ${message} ${JSON.stringify(fields)}`);
+  return { lines, log };
+}
+function fetchMock(status = 200) {
+  const calls = [];
+  const fn = async (url, init) => {
+    calls.push({ url, init });
+    return new Response("{}", {
+      status: typeof status === "function" ? status(calls.length) : status,
+    });
+  };
+  fn.calls = calls;
+  return fn;
+}
+const room = (id, msgId, extra = {}) => ({
+  room_id: id,
+  advert: { url: `/lagos/phone-${id}.html`, title: `Phone ${id}` },
+  user: { user_name: `Buyer ${id}` },
+  unread_count: 1,
+  last_message: { id: msgId, text: `hello ${msgId}`, created_at: 1761700000 },
+  ...extra,
+});
+const ok = (body) => ({ status: 200, body });
+// A browser mock that only offers the read path; any other method fails.
+function browserMock(responses) {
+  const calls = [];
+  const target = {
+    calls,
+    run: (fn) => fn(),
+    status: async () => ({ browser_open: true, signed_in: true }),
+    readResource: async (name, parameters) => {
+      calls.push({ name, parameters });
+      const r = responses[name];
+      return typeof r === "function" ? r(parameters) : r;
+    },
+  };
+  return new Proxy(target, {
+    get(t, key) {
+      if (key in t) return t[key];
+      if (typeof key === "symbol" || key === "then") return undefined;
+      throw new Error(`push feed touched browser.${String(key)}`);
+    },
+  });
+}
+
+test("disabled when the URL or auth value is missing", () => {
+  for (const e of [
+    {},
+    { JIJI_PUSH_WEBHOOK_URL: URL_OK },
+    { JIJI_PUSH_WEBHOOK_AUTH_VALUE: SECRET },
+    { JIJI_PUSH_WEBHOOK_URL: " ", JIJI_PUSH_WEBHOOK_AUTH_VALUE: " " },
+  ]) {
+    const c = readPushConfig(e, { runtimeDir: "/data" });
+    assert.equal(c.enabled, false);
+    assert.match(c.reason, /JIJI_PUSH_WEBHOOK_URL/);
+  }
+});
+
+test("config defaults: Authorization header, 60s poll, 1000 outbox, state under runtime", () => {
+  const c = readPushConfig(env(), { runtimeDir: "/data" });
+  assert.equal(c.enabled, true);
+  assert.equal(c.target.header, "Authorization");
+  assert.equal(c.target.value, SECRET);
+  assert.equal(c.target.host, "api2.cursor.sh");
+  assert.equal(c.pollMs, DEFAULT_POLL_MS);
+  assert.equal(c.outboxMax, DEFAULT_OUTBOX_MAX);
+  assert.equal(c.stateDir, "/data/push-notifications");
+});
+
+test("poll interval and outbox max are clamped; bad numbers fall back", () => {
+  const { log, lines } = recorder();
+  const read = (extra) => readPushConfig(env(extra), { runtimeDir: "/d", log });
+  assert.equal(read({ JIJI_PUSH_POLL_INTERVAL_MS: "10" }).pollMs, MIN_POLL_MS);
+  assert.equal(
+    read({ JIJI_PUSH_POLL_INTERVAL_MS: "99999999" }).pollMs,
+    MAX_POLL_MS,
+  );
+  assert.equal(
+    read({ JIJI_PUSH_POLL_INTERVAL_MS: "soon" }).pollMs,
+    DEFAULT_POLL_MS,
+  );
+  assert.equal(read({ JIJI_PUSH_WEBHOOK_OUTBOX_MAX: "0" }).outboxMax, 1);
+  assert.equal(read({ JIJI_PUSH_WEBHOOK_OUTBOX_MAX: "5" }).outboxMax, 5);
+  assert.equal(
+    read({ JIJI_PUSH_STATE_DIR: "/srv/push" }).stateDir,
+    "/srv/push",
+  );
+  assert.equal(read({ JIJI_PUSH_STATE_DIR: "relative" }).enabled, false);
+  assert.ok(lines.length >= 3);
+});
+
+test("bad URLs and headers disable the feed without throwing", () => {
+  for (const [url, extra] of [
+    ["http://api2.cursor.sh/hook", {}],
+    ["not a url", {}],
+    ["https://user:pw@api2.cursor.sh/hook", {}],
+    ["https://api2.cursor.sh/hook#frag", {}],
+    ["https://localhost/hook", {}],
+    ["https://127.0.0.1/hook", {}],
+    ["https://10.1.2.3/hook", {}],
+    ["https://192.168.1.10/hook", {}],
+    ["https://172.20.0.1/hook", {}],
+    ["https://169.254.169.254/hook", {}],
+    ["https://100.100.1.1/hook", {}],
+    ["https://[::1]/hook", {}],
+    ["https://[fd00::1]/hook", {}],
+    ["https://[fe80::1]/hook", {}],
+    ["https://[::ffff:127.0.0.1]/hook", {}],
+    ["https://0x7f.1/hook", {}],
+    [URL_OK, { JIJI_PUSH_WEBHOOK_AUTH_HEADER: "Host" }],
+    [URL_OK, { JIJI_PUSH_WEBHOOK_AUTH_HEADER: "Bad Header" }],
+    [URL_OK, { JIJI_PUSH_WEBHOOK_AUTH_VALUE: "Bearer a\r\nX: y" }],
+  ]) {
+    const c = readPushConfig(env({ JIJI_PUSH_WEBHOOK_URL: url, ...extra }), {
+      runtimeDir: "/d",
+    });
+    assert.equal(c.enabled, false, url);
+    assert.ok(c.reason);
+    assert.ok(!c.reason.includes(SECRET));
+  }
+  const custom = readPushConfig(
+    env({
+      JIJI_PUSH_WEBHOOK_AUTH_HEADER: "X-Routine-Key",
+      JIJI_PUSH_WEBHOOK_AUTH_VALUE: "k",
+    }),
+    { runtimeDir: "/d" },
+  );
+  assert.equal(custom.target.header, "X-Routine-Key");
+});
+
+test("public-address checks: literal hosts and fail-closed DNS", async () => {
+  for (const h of [
+    "localhost",
+    "a.localhost",
+    "127.0.0.1",
+    "10.0.0.1",
+    "100.64.0.1",
+    "100.127.255.255",
+    "169.254.1.1",
+    "[::1]",
+    "fc00::1",
+    "fe80::2",
+  ])
+    assert.equal(isNonPublicHost(h), true, h);
+  for (const h of [
+    "api2.cursor.sh",
+    "93.184.216.34",
+    "100.128.0.1",
+    "2606:4700::1",
+  ])
+    assert.equal(isNonPublicHost(h), false, h);
+  assert.equal(await resolvesPublic("x", publicDns), "public");
+  assert.equal(
+    await resolvesPublic("x", async () => [
+      { address: "93.184.216.34" },
+      { address: "10.0.0.5" },
+    ]),
+    "non_public",
+  );
+  assert.equal(
+    await resolvesPublic("x", async () => [{ address: "100.64.3.3" }]),
+    "non_public",
+  );
+  assert.equal(await resolvesPublic("x", async () => []), "unresolved");
+  assert.equal(
+    await resolvesPublic("x", async () => {
+      throw new Error("ENOTFOUND");
+    }),
+    "unresolved",
+  );
+});
+
+test("startup never throws and stays off for missing config, bad URL, or non-public DNS", async () => {
+  const dir = await tmp();
+  try {
+    const browser = browserMock({});
+    for (const [e, resolve, reason] of [
+      [{}, publicDns, /not set/],
+      [env({ JIJI_PUSH_WEBHOOK_URL: "http://x.test/" }), publicDns, /https/],
+      [env(), async () => [{ address: "127.0.0.1" }], /non-public/],
+      [
+        env(),
+        async () => {
+          throw new Error("dns down");
+        },
+        /did not resolve/,
+      ],
+    ]) {
+      const { log, lines } = recorder();
+      const fetch = fetchMock();
+      const push = await startPushNotifications({
+        env: e,
+        runtimeDir: dir,
+        browser,
+        log,
+        fetch,
+        resolve,
+      });
+      assert.equal(push.enabled, false);
+      assert.match(push.reason, reason);
+      assert.deepEqual(await push.tick(), { skipped: "disabled" });
+      await push.stop();
+      assert.equal(fetch.calls.length, 0);
+      assert.equal(browser.calls.length, 0);
+      assert.ok(lines.some((l) => l.includes("disabled")));
+      assert.ok(!lines.join("\n").includes(SECRET));
+    }
+    assert.deepEqual(await readdir(dir), [], "a disabled feed writes no state");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("first run baselines every source and emits nothing", () => {
+  const empty = { baselined: {}, rooms: {}, notifications: {}, adverts: {} };
+  const { next, events } = detectEvents(
+    empty,
+    {
+      rooms: [
+        room(1, 10),
+        room(2, 20, { last_message: { id: 21, offer: 5000 } }),
+      ],
+      notifications: [{ id: 7, type: "advert_approved", text: "Approved" }],
+      adverts: [{ id: 99, status: "active", title: "Car" }],
+    },
+    1000,
+  );
+  assert.deepEqual(events, []);
+  assert.deepEqual(next.baselined, {
+    rooms: true,
+    notifications: true,
+    adverts: true,
+  });
+  assert.equal(next.rooms["1"].marker, "id:10");
+  assert.equal(next.adverts["99"].status, "active");
+  assert.ok("7" in next.notifications);
+});
+
+test("new chat, offer, and ad status transitions produce stable events", () => {
+  const base = detectEvents(
+    { baselined: {}, rooms: {}, notifications: {}, adverts: {} },
+    {
+      rooms: [room(1, 10), room(2, 20)],
+      notifications: [{ id: 7, type: "info", text: "Welcome" }],
+      adverts: [{ id: 99, status: "on_review", title: "Car" }],
+    },
+    1000,
+  ).next;
+  const reads = {
+    rooms: [
+      room(1, 11, { last_message: { id: 11, text: "x".repeat(1000) } }),
+      room(2, 20),
+      room(3, 30, { last_message: { id: 30, make_an_offer: 75000 } }),
+      room(4, 40, { last_message: { id: 40, text: "mine", is_my: true } }),
+      room(5, 50, { unread_count: 0 }),
+    ],
+    notifications: [
+      { id: 7, type: "info", text: "Welcome" },
+      {
+        id: 8,
+        type: "advert_declined",
+        text: "Your ad was declined",
+        advert: { id: 99, title: "Car" },
+      },
+      { id: 9, type: "promo", text: "Boost your ad" },
+      { id: 10, type: "chat_offer", text: "New offer" },
+    ],
+    adverts: [
+      { id: 99, status: { name: "Declined" }, title: "Car" },
+      { id: 100, status: "active" },
+    ],
+  };
+  const { next, events } = detectEvents(base, reads, 2000);
+  const byId = Object.fromEntries(events.map((e) => [e.event_id, e]));
+  assert.deepEqual(Object.keys(byId).sort(), [
+    "jiji:ad_status:99:1",
+    "jiji:chat_message:1:id:11",
+    "jiji:notification:10",
+    "jiji:notification:8",
+    "jiji:offer:3:id:30",
+  ]);
+  const chat = byId["jiji:chat_message:1:id:11"];
+  assert.equal(chat.source, "jiji");
+  assert.equal(chat.data.room_id, "1");
+  assert.ok(chat.data.preview.length <= 280);
+  assert.equal(byId["jiji:offer:3:id:30"].type, "offer");
+  assert.equal(byId["jiji:offer:3:id:30"].data.offer_amount, 75000);
+  assert.equal(byId["jiji:notification:8"].type, "ad_status");
+  assert.equal(byId["jiji:notification:10"].type, "offer");
+  const ad = byId["jiji:ad_status:99:1"];
+  assert.deepEqual([ad.data.from, ad.data.to], ["on_review", "declined"]);
+  // Same reads again: nothing new.
+  assert.deepEqual(detectEvents({ ...next }, reads, 3000).events, []);
+  // Flip back and again: the second transition to declined is a distinct event.
+  const back = detectEvents(
+    next,
+    { adverts: [{ id: 99, status: "active" }] },
+    4000,
+  );
+  const again = detectEvents(
+    back.next,
+    { adverts: [{ id: 99, status: "declined" }] },
+    5000,
+  );
+  assert.deepEqual(
+    [...back.events, ...again.events].map((e) => e.event_id),
+    ["jiji:ad_status:99:2", "jiji:ad_status:99:3"],
+  );
+});
+
+test("a failed source keeps its state and does not re-baseline", () => {
+  const state = {
+    baselined: { rooms: true },
+    rooms: { 1: { marker: "id:10", at: 1 } },
+    notifications: {},
+    adverts: {},
+  };
+  const { next, events } = detectEvents(
+    state,
+    { rooms: null, notifications: null, adverts: null },
+    2,
+  );
+  assert.deepEqual(events, []);
+  assert.deepEqual(next.rooms, state.rooms);
+  assert.deepEqual(next.baselined, { rooms: true });
+});
+
+test("poller uses only read resources and never chat_messages or writes", async () => {
+  const browser = browserMock({
+    chat_rooms: ok({ status: "ok", results: [room(1, 10)] }),
+    notifications: ok({ notifications: [] }),
+    my_adverts: (p) =>
+      ok({
+        adverts:
+          p.page === 2
+            ? [{ id: 2, status: "active" }]
+            : [{ id: 1, status: "active" }],
+        next_url:
+          p.page === 2 ? null : "/api_web/v1/profile/my-ads.json?page=2",
+      }),
+  });
+  const reads = await pollJiji(browser, () => {});
+  assert.equal(reads.rooms.length, 1);
+  assert.deepEqual(reads.notifications, []);
+  assert.equal(reads.adverts.length, 2);
+  assert.ok(browser.calls.every((c) => PUSH_READS.includes(c.name)));
+  assert.deepEqual(
+    browser.calls.map((c) => c.name),
+    ["chat_rooms", "notifications", "my_adverts", "my_adverts"],
+  );
+});
+
+test("poller turns read errors and odd shapes into skipped sources", async () => {
+  const browser = browserMock({
+    chat_rooms: { status: 403 },
+    notifications: { error: "Jiji returned HTML or a challenge." },
+    my_adverts: async () => {
+      throw new Error("page crashed");
+    },
+  });
+  const { log, lines } = recorder();
+  assert.deepEqual(await pollJiji(browser, log), {
+    rooms: null,
+    notifications: null,
+    adverts: null,
+  });
+  assert.equal(lines.length, 3);
+});
+
+async function harness(
+  t,
+  {
+    responses,
+    status = async () => ({ browser_open: true, signed_in: true }),
+    fetchStatus = 200,
+    extraEnv = {},
+  } = {},
+) {
+  const dir = await tmp();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const browser = browserMock(responses);
+  Object.defineProperty(browser, "status", { value: status });
+  const { log, lines } = recorder();
+  const fetch = fetchMock(fetchStatus);
+  let clock = 1_000_000;
+  let connected = true;
+  const push = await startPushNotifications({
+    env: env(extraEnv),
+    runtimeDir: dir,
+    browser,
+    log,
+    fetch,
+    resolve: publicDns,
+    now: () => clock,
+    isEnabled: () => connected,
+    firstPollMs: 2 ** 31 - 1,
+  });
+  t.after(() => push.stop());
+  return {
+    dir,
+    push,
+    browser,
+    fetch,
+    lines,
+    advance: (ms) => (clock += ms),
+    disconnect: () => (connected = false),
+  };
+}
+
+test("end to end: baseline, then POST with auth and Idempotency-Key, then dedupe", async (t) => {
+  let rooms = [room(1, 10)];
+  const h = await harness(t, {
+    responses: {
+      chat_rooms: () => ok({ status: "ok", results: rooms }),
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    },
+  });
+  assert.equal(h.push.enabled, true);
+  const first = await h.push.tick();
+  assert.equal(first.events, 0);
+  await h.push.outbox.kick();
+  assert.equal(h.fetch.calls.length, 0, "baseline sends nothing");
+  rooms = [room(1, 11)];
+  const second = await h.push.tick();
+  assert.equal(second.queued, 1);
+  await h.push.outbox.kick();
+  assert.equal(h.fetch.calls.length, 1);
+  const { url, init } = h.fetch.calls[0];
+  assert.equal(url, new URL(URL_OK).href);
+  assert.equal(init.method, "POST");
+  assert.equal(init.redirect, "manual");
+  assert.equal(init.headers.Authorization, SECRET);
+  assert.equal(init.headers["Idempotency-Key"], "jiji:chat_message:1:id:11");
+  const body = JSON.parse(init.body);
+  assert.equal(body.type, "chat_message");
+  assert.equal(body.event_id, "jiji:chat_message:1:id:11");
+  // The same message again, or reloaded state: no second POST.
+  await h.push.tick();
+  await h.push.outbox.kick();
+  assert.equal(h.fetch.calls.length, 1);
+  assert.equal(h.push.store.depth(), 0);
+  const saved = JSON.parse(
+    await readFile(
+      path.join(h.dir, "push-notifications", "push-state.json"),
+      "utf8",
+    ),
+  );
+  assert.ok("jiji:chat_message:1:id:11" in saved.seen);
+  assert.equal(
+    (await stat(path.join(h.dir, "push-notifications"))).mode & 0o777,
+    0o700,
+  );
+  assert.equal(
+    (await stat(path.join(h.dir, "push-notifications", "push-state.json")))
+      .mode & 0o777,
+    0o600,
+  );
+  const logged = h.lines.join("\n");
+  assert.ok(!logged.includes(SECRET));
+  assert.ok(!logged.includes("query-secret"));
+  assert.ok(!logged.includes("1234-uuid"));
+});
+
+test("signed out, disconnected, or browser error skips the tick and keeps state", async (t) => {
+  let signedIn = false;
+  const h = await harness(t, {
+    responses: {
+      chat_rooms: ok({ status: "ok", results: [room(1, 10)] }),
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    },
+    status: async () => {
+      if (signedIn === "boom") throw new Error("browser crashed");
+      return { browser_open: true, signed_in: signedIn };
+    },
+  });
+  assert.deepEqual(await h.push.tick(), { skipped: "signed_out" });
+  signedIn = "boom";
+  assert.deepEqual(await h.push.tick(), { skipped: "browser_error" });
+  assert.equal(h.browser.calls.length, 0);
+  signedIn = true;
+  assert.equal((await h.push.tick()).result, "accepted");
+  h.disconnect();
+  assert.deepEqual(await h.push.tick(), { skipped: "disconnected" });
+  assert.deepEqual(h.push.store.snapshot().baselined, {
+    rooms: true,
+    notifications: true,
+    adverts: true,
+  });
+});
+
+test("failed deliveries back off and retry; 3xx is not followed", async (t) => {
+  let rooms = [room(1, 10)];
+  let code = 302;
+  const h = await harness(t, {
+    responses: {
+      chat_rooms: () => ok({ status: "ok", results: rooms }),
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    },
+    fetchStatus: () => code,
+  });
+  await h.push.tick();
+  rooms = [room(1, 11)];
+  await h.push.tick();
+  await h.push.outbox.kick();
+  assert.equal(h.fetch.calls.length, 1);
+  const item = h.push.store.snapshot().outbox[0];
+  assert.equal(item.attempts, 1);
+  assert.equal(item.nextAttemptAt, 1_000_000 + backoffSeconds(0) * 1000);
+  await h.push.outbox.kick();
+  assert.equal(h.fetch.calls.length, 1, "not due yet: no busy retry");
+  h.advance(backoffSeconds(0) * 1000);
+  code = 500;
+  await h.push.outbox.kick();
+  assert.equal(h.fetch.calls.length, 2);
+  assert.equal(h.push.store.snapshot().outbox[0].attempts, 2);
+  h.advance(backoffSeconds(1) * 1000);
+  code = 202;
+  await h.push.outbox.kick();
+  assert.equal(h.fetch.calls.length, 3);
+  assert.equal(h.push.store.depth(), 0);
+  assert.ok(h.lines.some((l) => l.includes("webhook_http_302")));
+});
+
+test("backoff schedule matches min(300, 2 ** min(attempts + 1, 9))", () => {
+  assert.deepEqual(
+    [0, 1, 2, 5, 7, 8, 20].map(backoffSeconds),
+    [2, 4, 8, 64, 256, 300, 300],
+  );
+});
+
+test("sendAlert re-checks DNS before every POST and fails closed", async () => {
+  const target = { url: URL_OK, header: "Authorization", value: SECRET };
+  const p = { event_id: "e1" };
+  const fetch = fetchMock();
+  assert.deepEqual(
+    await sendAlert(target, p, {
+      fetch,
+      resolve: async () => [{ address: "10.0.0.1" }],
+    }),
+    { ok: false, code: "webhook_dns_non_public" },
+  );
+  assert.deepEqual(
+    await sendAlert(target, p, {
+      fetch,
+      resolve: async () => {
+        throw new Error("x");
+      },
+    }),
+    { ok: false, code: "webhook_dns_error" },
+  );
+  assert.equal(fetch.calls.length, 0);
+  assert.deepEqual(
+    await sendAlert(target, p, {
+      resolve: publicDns,
+      fetch: async () => {
+        throw Object.assign(new Error("t"), { name: "TimeoutError" });
+      },
+    }),
+    { ok: false, code: "webhook_timeout" },
+  );
+  assert.deepEqual(await sendAlert(target, p, { fetch, resolve: publicDns }), {
+    ok: true,
+  });
+});
+
+test("outbox is bounded: at the cap new events are refused and state is not advanced", async () => {
+  const dir = await tmp();
+  try {
+    let clock = 1;
+    const store = new PushStore(dir, {
+      now: () => clock,
+      log: () => {},
+      outboxMax: 1,
+    });
+    const mk = (id) => ({
+      source: "jiji",
+      type: "chat_message",
+      event_id: id,
+      occurred_at: new Date(0).toISOString(),
+      summary: "s",
+      data: {},
+    });
+    const next = (marker) => ({
+      baselined: { rooms: true },
+      rooms: { 1: { marker, at: clock } },
+      notifications: {},
+      adverts: {},
+    });
+    assert.equal(store.commit(next("a"), [mk("e1")]).result, "accepted");
+    assert.equal(store.commit(next("b"), [mk("e2")]).result, "outbox_full");
+    assert.equal(
+      store.snapshot().rooms["1"].marker,
+      "a",
+      "refused poll is detected again later",
+    );
+    assert.equal(
+      store.commit(next("a"), [mk("e1")]).queued,
+      0,
+      "queued id deduped",
+    );
+    // Age limit drops stale alerts, freeing room.
+    clock += OUTBOX_MAX_AGE_MS;
+    assert.equal(store.due(), undefined);
+    assert.equal(store.commit(next("b"), [mk("e2")]).result, "accepted");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("corrupt outbox entries are dropped on load; an unreadable file is set aside", async () => {
+  const dir = await tmp();
+  try {
+    const good = {
+      id: "e1",
+      payload: {
+        source: "jiji",
+        type: "offer",
+        event_id: "e1",
+        occurred_at: "2026-10-29T00:00:00.000Z",
+        summary: "Offer",
+        data: {},
+      },
+      attempts: 0,
+      nextAttemptAt: 1,
+      enqueuedAt: 1,
+    };
+    await writeFile(
+      path.join(dir, "push-state.json"),
+      JSON.stringify({
+        version: 1,
+        baselined: { rooms: true, bogus: "yes" },
+        rooms: { 1: { marker: "id:1", at: 1 }, 2: "bad" },
+        seen: { e0: 1, bad: "x" },
+        outbox: [
+          good,
+          { ...good, id: "e2" },
+          {
+            ...good,
+            id: "e3",
+            payload: { ...good.payload, event_id: "e3", type: "wire" },
+          },
+          {
+            ...good,
+            id: "e4",
+            payload: { ...good.payload, event_id: "e4" },
+            nextAttemptAt: "soon",
+          },
+          null,
+        ],
+      }),
+    );
+    const { log, lines } = recorder();
+    const store = new PushStore(dir, { now: () => 1, log });
+    const s = store.snapshot();
+    assert.deepEqual(
+      s.outbox.map((i) => i.id),
+      ["e1"],
+    );
+    assert.deepEqual(s.baselined, { rooms: true });
+    assert.deepEqual(Object.keys(s.rooms), ["1"]);
+    assert.deepEqual(Object.keys(s.seen), ["e0"]);
+    assert.equal(
+      lines.filter((l) => l.includes("invalid push outbox item")).length,
+      4,
+    );
+    await writeFile(path.join(dir, "push-state.json"), "{not json");
+    const fresh = new PushStore(dir, { now: () => 42, log });
+    assert.deepEqual(fresh.snapshot().outbox, []);
+    assert.ok((await readdir(dir)).includes("push-state.json.corrupt-42"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("timer delay is clamped so a far-future retry cannot busy-loop", async () => {
+  const dir = await tmp();
+  try {
+    const store = new PushStore(dir, { now: () => 0, log: () => {} });
+    store.persist({
+      ...store.snapshot(),
+      outbox: [
+        {
+          id: "e",
+          payload: {
+            source: "jiji",
+            type: "offer",
+            event_id: "e",
+            occurred_at: "x",
+            summary: "",
+            data: {},
+          },
+          attempts: 9,
+          nextAttemptAt: Number.MAX_SAFE_INTEGER,
+          enqueuedAt: 0,
+        },
+      ],
+    });
+    const fetch = fetchMock();
+    const outbox = new AlertOutbox(
+      store,
+      { url: URL_OK, header: "Authorization", value: SECRET },
+      {
+        fetch,
+        resolve: publicDns,
+        log: () => {},
+        now: () => 0,
+      },
+    );
+    const delays = [];
+    const real = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms) => {
+      delays.push(ms);
+      return real(() => {}, 0);
+    };
+    try {
+      await outbox.kick();
+      await new Promise((r) => real(r, 5));
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    await outbox.close();
+    assert.equal(fetch.calls.length, 0);
+    assert.deepEqual(delays, [2 ** 31 - 1]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("stop clears the poll timer and outbox timer", async (t) => {
+  const h = await harness(t, {
+    responses: {
+      chat_rooms: ok({ status: "ok", results: [] }),
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    },
+  });
+  await h.push.stop();
+  assert.deepEqual(await h.push.tick(), { skipped: "stopped" });
+  assert.equal(h.push.outbox.timer, undefined);
+});
