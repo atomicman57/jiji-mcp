@@ -75,10 +75,19 @@ export class JijiBrowser {
     }
     await fs.mkdir(this.profile, { recursive: true, mode: 0o700 });
     await fs.chmod(this.profile, 0o700);
-    this.context = await chromium.launchPersistentContext(
-      this.profile,
-      browserLaunchOptions(process.env),
-    );
+    // Config errors from browserLaunchOptions are fixed strings and pass through.
+    const options = browserLaunchOptions(process.env);
+    try {
+      this.context = await chromium.launchPersistentContext(
+        this.profile,
+        options,
+      );
+    } catch (error) {
+      // Playwright's message can echo the proxy server or credentials, so only
+      // the error name is logged and a fixed message reaches status/sockets.
+      console.error("browser launch failed: " + (error?.name || "Error"));
+      throw new Error("browser launch failed (check proxy config)");
+    }
     this.context.on("close", () => {
       this.context = null;
       this.page = null;

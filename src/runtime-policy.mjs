@@ -31,10 +31,12 @@ function decodePart(value) {
   }
 }
 
-// Browser egress only; the relay connection does not use this proxy.
-// Credentials may sit in the URL userinfo or in JIJI_BROWSER_PROXY_USERNAME /
-// JIJI_BROWSER_PROXY_PASSWORD; the explicit variables win when both are set.
-// Errors never echo the value, which may carry credentials.
+const SOCKS_PROTOCOLS = new Set(["socks4:", "socks5:"]);
+
+// Browser egress only; the relay connection, photo downloads and push fetches
+// do not use this proxy. Credentials come from exactly one source: the URL
+// userinfo or JIJI_BROWSER_PROXY_USERNAME / JIJI_BROWSER_PROXY_PASSWORD.
+// Errors are fixed strings and never echo the value, which may carry credentials.
 export function browserProxy(env = {}) {
   if (!defined(env.JIJI_BROWSER_PROXY)) return undefined;
   let url;
@@ -53,15 +55,41 @@ export function browserProxy(env = {}) {
     throw new Error(
       "JIJI_BROWSER_PROXY must be an http, https, socks4 or socks5 URL with only a host and port.",
     );
-  const username = defined(env.JIJI_BROWSER_PROXY_USERNAME)
-    ? String(env.JIJI_BROWSER_PROXY_USERNAME)
+  if (!url.port)
+    throw new Error("JIJI_BROWSER_PROXY must include an explicit port.");
+  const urlHasCredentials = Boolean(url.username || url.password);
+  const envHasCredentials =
+    defined(env.JIJI_BROWSER_PROXY_USERNAME) ||
+    defined(env.JIJI_BROWSER_PROXY_PASSWORD);
+  if (urlHasCredentials && envHasCredentials)
+    throw new Error(
+      "JIJI_BROWSER_PROXY credentials must come from the URL or from JIJI_BROWSER_PROXY_USERNAME/PASSWORD, not both.",
+    );
+  const username = envHasCredentials
+    ? defined(env.JIJI_BROWSER_PROXY_USERNAME)
+      ? String(env.JIJI_BROWSER_PROXY_USERNAME)
+      : ""
     : decodePart(url.username);
-  const password = defined(env.JIJI_BROWSER_PROXY_PASSWORD)
-    ? String(env.JIJI_BROWSER_PROXY_PASSWORD)
+  const password = envHasCredentials
+    ? defined(env.JIJI_BROWSER_PROXY_PASSWORD)
+      ? String(env.JIJI_BROWSER_PROXY_PASSWORD)
+      : ""
     : decodePart(url.password);
+  if (Boolean(username) !== Boolean(password))
+    throw new Error(
+      "JIJI_BROWSER_PROXY username and password must both be set or both be empty.",
+    );
+  if (SOCKS_PROTOCOLS.has(url.protocol) && username)
+    throw new Error(
+      "JIJI_BROWSER_PROXY socks proxies do not support credentials.",
+    );
   const proxy = { server: url.protocol + "//" + url.host };
-  if (username) proxy.username = username;
-  if (password) proxy.password = password;
+  if (username) {
+    proxy.username = username;
+    proxy.password = password;
+  }
+  if (defined(env.JIJI_BROWSER_PROXY_BYPASS))
+    proxy.bypass = String(env.JIJI_BROWSER_PROXY_BYPASS).trim();
   return proxy;
 }
 

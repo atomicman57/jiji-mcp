@@ -74,11 +74,16 @@ test("browser proxy is optional and parses credentials without leaking them", ()
   );
   assert.deepEqual(
     browserLaunchOptions({
-      JIJI_BROWSER_PROXY: "https://url-user:url-pass@ng13.proxy.example:89",
-      JIJI_BROWSER_PROXY_USERNAME: "env-user",
-      JIJI_BROWSER_PROXY_PASSWORD: "env-pass",
+      JIJI_BROWSER_PROXY: "socks5://ng13.proxy.example:1080",
     }).proxy,
-    { server, username: "env-user", password: "env-pass" },
+    { server: "socks5://ng13.proxy.example:1080" },
+  );
+  assert.deepEqual(
+    browserLaunchOptions({
+      JIJI_BROWSER_PROXY: server,
+      JIJI_BROWSER_PROXY_BYPASS: " localhost,.internal.example ",
+    }).proxy,
+    { server, bypass: "localhost,.internal.example" },
   );
   for (const bad of [
     "not a url",
@@ -93,6 +98,94 @@ test("browser proxy is optional and parses credentials without leaking them", ()
         !/secret/.test(error.message),
     );
   }
+});
+
+test("browser proxy rejects ambiguous credentials, missing ports and authenticated socks", () => {
+  const server = "https://ng13.proxy.example:89";
+  const rejects = (env, message) =>
+    assert.throws(
+      () => browserLaunchOptions(env),
+      (error) => error.message === message && !/secret/.test(error.message),
+    );
+  const xor =
+    "JIJI_BROWSER_PROXY username and password must both be set or both be empty.";
+  rejects(
+    { JIJI_BROWSER_PROXY: server, JIJI_BROWSER_PROXY_USERNAME: "secret-user" },
+    xor,
+  );
+  rejects(
+    { JIJI_BROWSER_PROXY: server, JIJI_BROWSER_PROXY_PASSWORD: "secret-pass" },
+    xor,
+  );
+  rejects(
+    { JIJI_BROWSER_PROXY: "https://secret-user@ng13.proxy.example:89" },
+    xor,
+  );
+  rejects(
+    { JIJI_BROWSER_PROXY: "https://:secret-pass@ng13.proxy.example:89" },
+    xor,
+  );
+
+  const port = "JIJI_BROWSER_PROXY must include an explicit port.";
+  rejects({ JIJI_BROWSER_PROXY: "https://ng13.proxy.example" }, port);
+  rejects({ JIJI_BROWSER_PROXY: "http://ng13.proxy.example/" }, port);
+  rejects(
+    {
+      JIJI_BROWSER_PROXY: "https://secret-user:secret-pass@ng13.proxy.example",
+    },
+    port,
+  );
+
+  const socks = "JIJI_BROWSER_PROXY socks proxies do not support credentials.";
+  rejects(
+    {
+      JIJI_BROWSER_PROXY:
+        "socks5://secret-user:secret-pass@ng13.proxy.example:1080",
+    },
+    socks,
+  );
+  rejects(
+    {
+      JIJI_BROWSER_PROXY: "socks5://ng13.proxy.example:1080",
+      JIJI_BROWSER_PROXY_USERNAME: "secret-user",
+      JIJI_BROWSER_PROXY_PASSWORD: "secret-pass",
+    },
+    socks,
+  );
+  rejects(
+    {
+      JIJI_BROWSER_PROXY:
+        "socks4://secret-user:secret-pass@ng13.proxy.example:1080",
+    },
+    socks,
+  );
+
+  const dual =
+    "JIJI_BROWSER_PROXY credentials must come from the URL or from JIJI_BROWSER_PROXY_USERNAME/PASSWORD, not both.";
+  rejects(
+    {
+      JIJI_BROWSER_PROXY:
+        "https://secret-user:secret-pass@ng13.proxy.example:89",
+      JIJI_BROWSER_PROXY_USERNAME: "secret-env-user",
+      JIJI_BROWSER_PROXY_PASSWORD: "secret-env-pass",
+    },
+    dual,
+  );
+  rejects(
+    {
+      JIJI_BROWSER_PROXY:
+        "https://secret-user:secret-pass@ng13.proxy.example:89",
+      JIJI_BROWSER_PROXY_PASSWORD: "secret-env-pass",
+    },
+    dual,
+  );
+  rejects(
+    {
+      JIJI_BROWSER_PROXY: "https://secret-user@ng13.proxy.example:89",
+      JIJI_BROWSER_PROXY_USERNAME: "secret-env-user",
+    },
+    dual,
+  );
 });
 
 test("the control page refuses any bind host except loopback", () => {
@@ -170,6 +263,7 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   assert.doesNotMatch(envExample, /^JIJI_PUSH_/m);
   // The browser proxy ships documented but off.
   assert.match(envExample, /^# JIJI_BROWSER_PROXY=/m);
+  assert.match(envExample, /^# JIJI_BROWSER_PROXY_BYPASS=/m);
   assert.doesNotMatch(envExample, /^JIJI_BROWSER_PROXY/m);
 });
 
