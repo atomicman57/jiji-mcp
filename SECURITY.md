@@ -22,6 +22,10 @@ Preparing messages, account changes or advert submissions sends no mutation unle
 
 Plans expire after ten minutes. An id is sent at most once. Identical text to the same chat is suppressed inside `JIJI_SEND_DEDUPE_MS`. Message attempts stop for the hour only when `JIJI_HOURLY_SEND_CAP` is set. Uncertain outcomes are never retried automatically. Outcomes are appended to a mode-0600 local send log. The log stores a message hash and length unless `JIJI_SEND_LOG_TEXT` is on. Before sending text, the chat listing must match the approved listing. Submitted adverts remain subject to Jiji validation/moderation. Passwords, paid packages and financial-authorization fields are rejected from generic plans. Financial final steps, credentials, identity uploads and account deletion are owner handoffs.
 
+## Push notifications
+
+The optional push feed is notify-only. It reads `chat_rooms`, `notifications` and `my_adverts` through the signed-in companion browser and never opens a conversation, sends, marks read, or calls a Jiji action or workflow. Its only outbound request is the alert POST to `JIJI_PUSH_WEBHOOK_URL`, which must be HTTPS to a public host; the host is re-resolved before every POST and any non-public or unresolved answer sends nothing. Redirects are not followed. Alerts carry a truncated message preview and listing details; treat the receiving webhook as trusted with that content. The auth value is never logged. Undelivered alerts, which may hold previews, stay in a mode-0600 state file for at most seven days.
+
 ## Remote agents
 
 OAuth grants use the Cloudflare provider. Expiring, atomically consumed, rate-limited pairing codes bind each agent to a companion. Routing uses authenticated identity rather than agent-supplied user IDs. Each companion/server origin has a random 256-bit identity stored through an encrypted credential helper. Never post tokens, pairing codes or private chats in logs/issues.

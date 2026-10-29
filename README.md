@@ -128,6 +128,48 @@ Set these in the companion application-data `config.json`, or as environment var
 
 Every release attempt is appended to `send-log.jsonl` in the companion application-data directory, mode `0600`. By default the log stores the target, outcome, message length, and a SHA-256 of the message, not the message text. Set `JIJI_SEND_LOG_TEXT=true` to store the text as well. Restart the companion after changing these settings. Auto-approve of the existing prepare tools runs in the companion, so a companion restart is enough for that behavior. `jiji_send_prepared` is a new tool: a local MCP client sees it on its next process start, and agents that connect through the hosted relay see it only after that relay worker is redeployed. D1 and Durable Object bindings do not change.
 
+## Push notifications (notify-only)
+
+The companion can poll Jiji and POST new events to one HTTPS webhook, such as a Grok Bot routine. It is off by default and stays off until both `JIJI_PUSH_WEBHOOK_URL` and `JIJI_PUSH_WEBHOOK_AUTH_VALUE` are set. It never replies, never sends a message or offer, never marks a chat or notification read, and never calls a Jiji action or workflow. The alert POST is its only outbound request.
+
+Each poll reads three fixed account resources through the signed-in companion browser: `chat_rooms`, `notifications`, and `my_adverts` (up to five pages, following only an explicit next page). It does not open conversations or read `chat_messages`, because opening a chat may mark it read. Events:
+
+| Type | Source | When |
+| --- | --- | --- |
+| `chat_message` | `chat_rooms` | A room's last message changes, it is not marked as your own, and its unread count is not `0`. |
+| `offer` | `chat_rooms`, `notifications` | The same, when the last message carries a native offer (`offer`, `make_an_offer`, `offer_amount`, or an offer message type); or a new notification whose kind or text mentions an offer. |
+| `ad_status` | `my_adverts`, `notifications` | An advert's status changes (for example `on_review` → `active` or `declined`); or a new notification whose kind or text mentions approval, rejection, decline, block or moderation. |
+
+Jiji's web API is private and undocumented. Field names were inferred from the web client and mocked fixtures, and unknown fields are treated as unknown rather than guessed. A room whose last message has no own/unread signal alerts on any change, which can include a reply you sent from another device. An approval can arrive both as an `ad_status` change and as a notification, with different event ids.
+
+The first successful read of each source records everything as already seen and sends nothing. Later changes alert. A signed-out browser, a Jiji error, or a disconnected companion skips that poll and keeps the saved state. Alert body:
+
+```json
+{
+  "source": "jiji",
+  "type": "chat_message",
+  "event_id": "jiji:chat_message:116980747:id:5521",
+  "occurred_at": "2026-10-29T10:15:00.000Z",
+  "summary": "New Jiji message from Buyer about \"iPhone 13\"",
+  "data": { "via": "chat_rooms", "room_id": "116980747", "chat_url": "/profile-messages/116980747", "unread": 1, "preview": "Is it still available?" }
+}
+```
+
+Previews are capped at 280 characters. Delivery is at least once with `Idempotency-Key: <event_id>`; the receiver should dedupe on `event_id`. Any 2xx is accepted. Redirects are failures and are not followed.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `JIJI_PUSH_WEBHOOK_URL` | unset | `https://` URL with no credentials or fragment. Hosts that are localhost, loopback, private, link-local, CGNAT (`100.64.0.0/10`) or ULA are refused. The host is resolved at startup and again before every POST; any non-public or unresolved answer fails closed. A bad value logs a reason and leaves the feed off. |
+| `JIJI_PUSH_WEBHOOK_AUTH_HEADER` | `Authorization` | Header name for the auth value. Letters, digits and hyphens. |
+| `JIJI_PUSH_WEBHOOK_AUTH_VALUE` | unset | Secret header value, for example `Bearer <key>`. Never logged. |
+| `JIJI_PUSH_POLL_INTERVAL_MS` | `60000` | Poll interval, clamped to 15 seconds through 15 minutes. |
+| `JIJI_PUSH_STATE_DIR` | `<app data>/push-notifications` | Absolute path for `push-state.json` (mode `0600`, directory `0700`). |
+| `JIJI_PUSH_WEBHOOK_OUTBOX_MAX` | `1000` | Most undelivered alerts kept, 1–100000. |
+
+`push-state.json` holds the per-source baseline, the last message marker per room, the last status per advert, delivered event ids (kept seven days), and the outbox. Undelivered alerts retry after `min(300, 2 ** min(attempts + 1, 9))` seconds and are dropped after seven days. When the outbox is full, a poll's new events are refused and that poll's state is not saved, so they are detected again once the outbox drains. An unreadable state file is set aside as `push-state.json.corrupt-<ms>`, and the feed baselines again without alerting. Log lines name the webhook host only, never its path, query or auth value. `status` reports `push_notifications` with `enabled`, the host, interval and outbox depth, or the reason it is off.
+
+Set the variables on the companion and restart it. The relay worker does not change. Enabling this on the Linux server is a deploy step that needs the owner's go-ahead; it is not done by this change.
+
 ## Linux server
 
 The companion can run headless on Linux and dial out to the same relay. No tunnel is required. The approve page stays on `127.0.0.1`. Sign-in is a separate one-time unit. See [deploy/README.md](deploy/README.md) for the container, systemd units, and cutover checklist. Do not copy the Mac browser profile.
