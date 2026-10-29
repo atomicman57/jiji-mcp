@@ -139,16 +139,60 @@ The Worker uses Cloudflare D1 and per-user Durable Objects, plus `@cloudflare/wo
 
 Set these in the companion application-data `config.json`, or as environment variables. An environment variable wins when it is set. The defaults keep today’s approval page.
 
-| Setting                | Default  | Effect                                                                                                                                                                                                                                                                               |
-| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `JIJI_AUTO_APPROVE`    | `false`  | When `true`, the prepare tools send immediately and `jiji_send_prepared` may release a pending message, both through the same function as the local Approve button. When `false`, prepare stays pending and `jiji_send_prepared` refuses. The Approve page is then the only release. |
-| `JIJI_HOURLY_SEND_CAP` | unset    | Optional. When unset, message sends are not limited by the hour. When set to a number, the attempt that would exceed it returns state `capped` with `blocked` and `limited`, and sends nothing. `0` blocks every send.                                                               |
-| `JIJI_SEND_DEDUPE_MS`  | `600000` | Identical message text, including the same native offer amount, is not sent again to the same chat inside this window. The new id returns state `duplicate` and sends nothing.                                                                                                       |
-| `JIJI_SEND_LOG_TEXT`   | `false`  | When `false`, `send-log.jsonl` stores a SHA-256 of the message and its length. When `true`, the log also stores the message text.                                                                                                                                                    |
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `JIJI_AUTO_APPROVE` | `false` | When `true`, the prepare tools send immediately and `jiji_send_prepared` may release a pending message, both through the same function as the local Approve button. When `false`, prepare stays pending and `jiji_send_prepared` refuses. The Approve page is then the only release. |
+| `JIJI_HOURLY_SEND_CAP` | unset | Optional. When unset, message sends are not limited by the hour. When set to a number, the attempt that would exceed it returns state `capped` with `blocked` and `limited`, and sends nothing. `0` blocks every send. |
+| `JIJI_SEND_DEDUPE_MS` | `600000` | Identical message text, including the same native offer amount, is not sent again to the same chat inside this window. The new id returns state `duplicate` and sends nothing. Up to `86400000` (24 hours). |
+| `JIJI_SEND_LOG_TEXT` | `false` | When `false`, `send-log.jsonl` stores a SHA-256 of the message and its length. When `true`, the log also stores the message text. |
 
 `jiji_send_prepared` takes a pending message id and calls that same approval function only when `JIJI_AUTO_APPROVE` is true. When it is false, the tool returns an error and sends nothing. Calling it again for an id that is already `sending`, `sent`, `failed`, `uncertain`, `expired`, `capped`, or `duplicate` does not send. A timeout or any other ambiguous failure after the request may have left the machine is `uncertain` and is never retried. A failure that is known not to have sent is `failed`, and that same id is still not retried. `jiji_message_status` reports these states.
 
 Every release attempt is appended to `send-log.jsonl` in the companion application-data directory, mode `0600`. By default the log stores the target, outcome, message length, and a SHA-256 of the message, not the message text. Set `JIJI_SEND_LOG_TEXT=true` to store the text as well. Restart the companion after changing these settings. Auto-approve of the existing prepare tools runs in the companion, so a companion restart is enough for that behavior. `jiji_send_prepared` is a new tool: a local MCP client sees it on its next process start, and agents that connect through the hosted relay see it only after that relay worker is redeployed. D1 and Durable Object bindings do not change.
+
+## Push notifications (notify-only)
+
+The companion can poll Jiji and POST new events to one HTTPS webhook, such as a Grok Bot routine. It is off by default and stays off until both `JIJI_PUSH_WEBHOOK_URL` and `JIJI_PUSH_WEBHOOK_AUTH_VALUE` are set. It never replies, never sends a message or offer, never marks a chat or notification read, and never calls a Jiji action or workflow. The alert POST is its only outbound request.
+
+Each poll reads three fixed account resources through the signed-in companion browser: `chat_rooms`, `notifications`, and `my_adverts` (each up to five pages, following only an explicit next page). It does not open conversations or read `chat_messages`, because opening a chat may mark it read. Events:
+
+| Type | Source | When |
+| --- | --- | --- |
+| `chat_message` | `chat_rooms` | A room's last message changes, it is not marked as your own, and its unread count is known and at least `1`. |
+| `offer` | `chat_rooms`, `notifications` | The same, when the last message carries a native offer (`offer: true`, a positive `offer`, `make_an_offer` or `offer_amount`, or an offer message type); or a new notification whose kind or text mentions an offer. `offer: false`, `0` or `""` is not an offer. |
+| `ad_status` | `my_adverts`, `notifications` | An advert's status changes (for example `on_review` → `active` or `declined`); or a new notification whose kind or text mentions approval, rejection, decline, block or moderation. |
+
+Jiji's web API is private and undocumented. Field names were inferred from the web client and mocked fixtures, and unknown fields are treated as unknown rather than guessed. A room with no unread count never alerts, so a reply you sent from another device is not reported as new; the cost is that a room whose payload lacks an unread count is silent. Chat and offer alerts from `chat_rooms` require a known unread count of at least `1`. One ad status change can arrive both as a `my_adverts` transition and as a notification. In the same poll only the `my_adverts` alert is sent. Across polls, whichever source alerts first wins and the matching alert from the other source is dropped, in either order, if it arrives within 48 hours. They match on advert id and outcome (approved, rejected or under review), so an approval never hides a later rejection. Recording a new outcome forgets that advert's earlier alerts with a different outcome, so an approval from before a rejection never hides a later approval. A `my_adverts` transition dropped as a repeat does not hide other notifications in the same poll. If the outcome can't be read from the advert status, they match on advert id alone, and only within 6 hours. Each recorded alert pairs once.
+
+The first successful read of each source records everything as already seen and sends nothing. Later changes alert. A signed-out browser, a Jiji error, or a disconnected companion skips that poll and keeps the saved state. Alert body:
+
+```json
+{
+  "source": "jiji",
+  "type": "chat_message",
+  "event_id": "jiji:chat_message:116980747:id:5521",
+  "occurred_at": "2026-10-29T10:15:00.000Z",
+  "summary": "New Jiji message from Buyer about \"iPhone 13\"",
+  "data": { "via": "chat_rooms", "room_id": "116980747", "chat_url": "/profile-messages/116980747", "unread": 1, "preview": "Is it still available?" }
+}
+```
+
+Previews are capped at 280 characters. Delivery is at least once with `Idempotency-Key: <event_id>`; the receiver should dedupe on `event_id`. Any 2xx is accepted. Network errors, timeouts, DNS failures, 5xx, 408 and 429 are retried. Any other status, including redirects (never followed) and 4xx such as 400, 401, 403 and 404, is logged with its code and event id and dropped without retry.
+
+The webhook host is DNS-checked, failing closed, at startup and again before every POST, but the address is not pinned: `fetch` resolves the name again, so there is a check-then-fetch (DNS rebinding) window in which a host that changes its answer between the check and the request could be reached at a non-public address. Point the webhook only at a host you trust.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `JIJI_PUSH_WEBHOOK_URL` | unset | `https://` URL with no credentials or fragment. Hosts that are localhost, loopback, private, link-local, CGNAT (`100.64.0.0/10`) or ULA are refused. The host is resolved at startup and again before every POST; any non-public or unresolved answer fails closed. A bad value logs a reason and leaves the feed off. |
+| `JIJI_PUSH_WEBHOOK_AUTH_HEADER` | `Authorization` | Header name for the auth value. Letters, digits and hyphens. |
+| `JIJI_PUSH_WEBHOOK_AUTH_VALUE` | unset | Secret header value, for example `Bearer <key>`. Never logged. |
+| `JIJI_PUSH_POLL_INTERVAL_MS` | `60000` | Poll interval, clamped to 15 seconds through 15 minutes. |
+| `JIJI_PUSH_STATE_DIR` | `<app data>/push-notifications` | Absolute path for `push-state.json` (mode `0600`, directory `0700`). |
+| `JIJI_PUSH_WEBHOOK_OUTBOX_MAX` | `1000` | Most undelivered alerts kept, 1–100000. |
+
+`push-state.json` holds the per-source baseline, the last message marker per room, the last status per advert, recent ad status alerts for cross-poll dedupe (kept 48 hours, at most 1000, oldest dropped first), delivered event ids (kept seven days), and the outbox. Retryable failures retry after `min(300, 2 ** min(attempts + 1, 9))` seconds and are dropped after seven days. When the outbox is full, a poll's new events are refused and that poll's state is not saved, so they are detected again once the outbox drains. An unreadable state file is set aside as `push-state.json.corrupt-<ms>`, and the feed baselines again without alerting. Log lines name the webhook host only, never its path, query or auth value. `status` reports `push_notifications` with `enabled`, the host, interval and outbox depth, or the reason it is off.
+
+Set the variables on the companion and restart it. The relay worker does not change. Enabling this on the Linux server is a deploy step that needs the owner's go-ahead; it is not done by this change.
 
 ## Linux server
 
