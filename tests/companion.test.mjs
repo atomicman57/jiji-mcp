@@ -186,3 +186,52 @@ test("auto-approve opt-in is visible and does not open the browser by itself", a
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test("a bad push webhook URL leaves the feed off without stopping the companion", async () => {
+  const tmp = await mkdtemp(path.join(tmpdir(), "jiji-companion-push-"));
+  const socket = path.join(tmp, "bridge.sock");
+  const probe = net.createServer();
+  await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+  const port = probe.address().port;
+  await new Promise((r) => probe.close(r));
+  await writeFile(
+    path.join(tmp, "config.json"),
+    JSON.stringify({ cloudEnabled: false, port }),
+  );
+  const secret = "Bearer companion-test-secret";
+  const processHandle = spawn(
+    process.execPath,
+    [new URL("../src/companion.mjs", import.meta.url).pathname],
+    {
+      env: {
+        ...process.env,
+        JIJI_MCP_SOCKET: socket,
+        // Loopback fails the literal check before any DNS or network use.
+        JIJI_PUSH_WEBHOOK_URL: "https://127.0.0.1/hook",
+        JIJI_PUSH_WEBHOOK_AUTH_VALUE: secret,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  let text = "";
+  processHandle.stderr.on("data", (c) => (text += c));
+  try {
+    await new Promise((resolve, reject) => {
+      processHandle.stderr.on("data", () => {
+        if (text.includes("push notifications disabled")) resolve();
+      });
+      processHandle.on("exit", (code) =>
+        reject(new Error("Companion exited " + code + " " + text)),
+      );
+    });
+    const status = await bridgeRequest({ action: "status" }, socket);
+    assert.equal(status.push_notifications.enabled, false);
+    assert.match(status.push_notifications.reason, /loopback/);
+    assert.equal(status.browser_open, false, "a disabled feed never polls");
+    assert.ok(!text.includes(secret));
+  } finally {
+    processHandle.kill("SIGTERM");
+    await new Promise((resolve) => processHandle.once("exit", resolve));
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
