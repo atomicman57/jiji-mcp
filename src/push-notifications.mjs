@@ -25,6 +25,8 @@ export const SEEN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 // the shorter window.
 export const AD_STATUS_DEDUPE_MS = 48 * 60 * 60 * 1000;
 export const AD_STATUS_LOOSE_DEDUPE_MS = 6 * 60 * 60 * 1000;
+// Hard cap on remembered ad status alerts; the oldest go first.
+export const MAX_AD_STATUS_ENTRIES = 1000;
 export const ALERT_TIMEOUT_MS = 20000;
 export const PREVIEW_MAX = 280;
 // Page cap for every paged push read (chat rooms, notifications, adverts).
@@ -904,6 +906,13 @@ function pairAdStatus(recent, event, outcome, now) {
   return true;
 }
 
+const newest = (map, max) =>
+  Object.fromEntries(
+    Object.entries(map)
+      .sort(([, a], [, b]) => b.at - a.at)
+      .slice(0, max),
+  );
+
 const forget = (map, now) =>
   Object.fromEntries(
     Object.entries(map).filter(([, v]) => now - v.at < SEEN_RETENTION_MS),
@@ -1059,7 +1068,7 @@ export function detectEvents(state, reads, now) {
       )
     )
       dropped.add(e);
-  next.adStatus = recent;
+  next.adStatus = newest(recent, MAX_AD_STATUS_ENTRIES);
   next.rooms = forget(next.rooms, now);
   next.notifications = forget(next.notifications, now);
   next.adverts = forget(next.adverts, now);

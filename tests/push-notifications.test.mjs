@@ -16,6 +16,7 @@ import {
   AlertOutbox,
   DEFAULT_OUTBOX_MAX,
   DEFAULT_POLL_MS,
+  MAX_AD_STATUS_ENTRIES,
   MAX_POLL_MS,
   MAX_PUSH_PAGES,
   MIN_POLL_MS,
@@ -1278,6 +1279,24 @@ test("a dropped my_adverts repeat does not hide a same-poll rejection notificati
     { notifications: [approval(8), decline(9)], adverts: [car("active")] },
   ]);
   assert.deepEqual(ids, ["jiji:notification:8", "jiji:notification:9"]);
+});
+
+test("remembered ad status alerts are capped, dropping the oldest first", () => {
+  const now = 10_000_000;
+  const adStatus = {};
+  for (let i = 0; i <= MAX_AD_STATUS_ENTRIES; i++)
+    adStatus[`k${i}`] = {
+      advert: `a${i}`,
+      via: "my_adverts",
+      outcome: "approved",
+      at: now - MAX_AD_STATUS_ENTRIES - 1 + i,
+    };
+  const { next } = detectEvents({ ...fresh(), adStatus }, {}, now);
+  const keys = Object.keys(next.adStatus);
+  assert.equal(keys.length, MAX_AD_STATUS_ENTRIES);
+  assert.ok(!keys.includes("k0"));
+  assert.ok(keys.includes("k1"));
+  assert.ok(keys.includes(`k${MAX_AD_STATUS_ENTRIES}`));
 });
 
 test("ad status pairing expires: known outcomes after 48h, unknown after 6h", () => {
