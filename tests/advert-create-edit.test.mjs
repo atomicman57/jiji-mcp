@@ -863,6 +863,90 @@ test("an unrecognised pre-filled trial or paid control fails prepare closed", as
   assert.equal(state.writes.length, 0);
 });
 
+test("ordinary Boost/promoted attribute values do not trip the paid-prefill guard", async () => {
+  const { browser, state } = mockAdvertBrowser(JijiBrowser);
+  state.base.fields.push(
+    {
+      name: "attr_model",
+      label: "Model",
+      values: [
+        { value: "boost", label: "Boost" },
+        { value: "boost_pro", label: "Boost Pro" },
+      ],
+    },
+    { name: "attr_series", label: "Series" },
+  );
+  state.category.fields
+    .find((f) => f.name === "attr_condition")
+    .values.push({ value: "promoted", label: "promoted" });
+  // 1. A model option labelled "Boost".
+  await browser.prepareAdvert(
+    solarCreate({ fields: { ...solarCreate().fields, attr_model: "boost" } }),
+  );
+  // 2. "Boost Pro" as an option and as a free-text attribute.
+  await browser.prepareAdvert(
+    solarCreate({
+      fields: {
+        ...solarCreate().fields,
+        attr_model: "boost_pro",
+        attr_series: "Boost Pro",
+      },
+    }),
+  );
+  // 3. A condition of "promoted".
+  await browser.prepareAdvert(
+    solarCreate({
+      fields: { ...solarCreate().fields, attr_condition: "promoted" },
+    }),
+  );
+  assert.equal(state.writes.length, 0);
+});
+
+test("strong promo values still fail closed: hidden trial_14 and priced options", async () => {
+  // 4. A hidden, unrecognised control holding a trial token.
+  const { browser, state } = mockAdvertBrowser(JijiBrowser);
+  state.base.fields.push({
+    name: "attr_mode",
+    label: "Mode",
+    value: "trial_14",
+  });
+  await assert.rejects(
+    browser.prepareAdvert(solarCreate()),
+    /"Mode" set to what looks like a paid promotion or trial/,
+  );
+  // 5. A selected option that costs money, on an otherwise ordinary control.
+  state.base.fields[state.base.fields.length - 1] = {
+    name: "attr_finish",
+    label: "Finish",
+    value: "gloss",
+    values: [
+      { value: "matte", label: "Matte" },
+      { value: "gloss", label: "Gloss", price: 500 },
+    ],
+  };
+  await assert.rejects(
+    browser.prepareAdvert(solarCreate()),
+    /looks like a paid promotion/,
+  );
+  // A strong token only counts on a promo-looking control or beside paid
+  // siblings; here a sibling option costs money.
+  state.base.fields[state.base.fields.length - 1] = {
+    name: "attr_listing",
+    label: "Listing",
+    value: "top_7",
+    values: [
+      { value: "std", label: "Standard" },
+      { value: "top_7", label: "Top" },
+      { value: "top_30", label: "Top", price: 2000 },
+    ],
+  };
+  await assert.rejects(
+    browser.prepareAdvert(solarCreate()),
+    /looks like a paid promotion/,
+  );
+  assert.equal(state.writes.length, 0);
+});
+
 test("duplicate category names at one level require category_id", () => {
   const tree = [
     {

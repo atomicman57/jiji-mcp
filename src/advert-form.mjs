@@ -30,10 +30,21 @@ const optionCost = (o) =>
     ? Number(o.price ?? o.amount ?? o.cost ?? o.price_value ?? 0) || 0
     : 0;
 const PHOTO_FIELD = /^(images|image_ids|photos|photo_ids)$/;
-// Values/option labels that look like a paid or trial promotion. Used to fail
-// closed on pre-filled controls that isPromoField did not recognise.
-const PAID_LOOKING =
-  /\b(free\s*)?trial\b|\bpromo(ted|tion)?\b|\bboost(ed)?\b|\bpaid[\s_-]*(promo|package|ad|listing)|\b(top|vip|premium|diamond)[\s_-]*\d+|\b(top|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b/i;
+// Strong paid/trial signals for a selected value or option label. A bare
+// "Boost" or "promoted" is deliberately not enough: those are ordinary model
+// names and conditions.
+const STRONG_PROMO =
+  /\bfree\s*trial\b|\b(top|boost|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b/i;
+const PROMO_TOKEN = /^(trial|top|boost|vip|premium)_\w+$/i;
+// A token with a numeric term ("trial_14", "top_7") is a promo selection even
+// on a hidden control with no name, label or options to corroborate it.
+const PROMO_TERM_TOKEN = /^(trial|top|boost|vip|premium)_\d+$/i;
+const PROMO_CONTROL =
+  /promo|package|boost|trial|vip|premium|\btop[\s_-]*ads?\b/i;
+const strongPromo = (v) => {
+  const s = text(v);
+  return STRONG_PROMO.test(s) || PROMO_TOKEN.test(s);
+};
 export const MAX_PRICE = 1e12;
 
 const text = (v) => (v === undefined || v === null ? "" : String(v)).trim();
@@ -438,7 +449,8 @@ function assertPrice(value) {
 }
 
 // Returns the first form field (other than the forced promo fields) whose
-// effective value looks like a paid/trial selection or costs money.
+// effective value costs money, or carries a strong paid/trial signal on a
+// control that itself looks like a promotion.
 function paidLookingField(body, fields, forced) {
   for (const f of fields) {
     if (forced.has(f.name) || PHOTO_FIELD.test(f.name)) continue;
@@ -451,22 +463,32 @@ function paidLookingField(body, fields, forced) {
       value === false
     )
       continue;
+    const promoControl = PROMO_CONTROL.test(`${f.name} ${f.label}`);
     if (Array.isArray(f.options) && f.options.length) {
       const picked = f.options.find(
         (o) => String(optionValue(o)) === String(value),
       );
       if (!picked) continue;
-      const label = optionLabel(picked);
       if (optionCost(picked) > 0) return f;
+      const label = optionLabel(picked);
       if (FREE_OPTION.test(label)) continue;
-      if (PAID_LOOKING.test(label) || PAID_LOOKING.test(String(value)))
-        return f;
+      if (!strongPromo(label) && !strongPromo(value)) continue;
+      const promoSiblings = f.options.some(
+        (o) =>
+          o !== picked && (optionCost(o) > 0 || strongPromo(optionLabel(o))),
+      );
+      if (promoControl || promoSiblings) return f;
       continue;
     }
     if (typeof value === "object") continue;
     // Short token values such as "trial_14" or "top_7"; free text is skipped.
-    const token = String(value);
-    if (token.length <= 40 && PAID_LOOKING.test(token.replace(/_/g, " ")))
+    const token = text(value);
+    if (token.length > 40) continue;
+    if (PROMO_TERM_TOKEN.test(token)) return f;
+    if (
+      promoControl &&
+      (strongPromo(token) || strongPromo(token.replace(/_/g, " ")))
+    )
       return f;
   }
   return null;
