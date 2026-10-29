@@ -35,12 +35,12 @@ const PHOTO_FIELD = /^(images|image_ids|photos|photo_ids)$/;
 // names and conditions.
 const STRONG_PROMO =
   /\bfree\s*trial\b|\b(top|boost|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b/i;
-const PROMO_TOKEN = /^(trial|top|boost|vip|premium)_\w+$/i;
-// A token with a numeric term ("trial_14", "top_7") is a promo selection even
-// on a hidden control with no name, label or options to corroborate it.
-const PROMO_TERM_TOKEN = /^(trial|top|boost|vip|premium)_\d+$/i;
+const PROMO_TOKEN = /^(trial|top|boost|vip|premium|diamond)_\w+$/i;
+// A token with a numeric term ("trial_14", "top_7") is a promo selection on
+// any control, whatever its name, label or options say.
+const PROMO_TERM_TOKEN = /^(trial|top|boost|vip|premium|diamond)_\d+$/i;
 const PROMO_CONTROL =
-  /promo|package|boost|trial|vip|premium|\btop[\s_-]*ads?\b/i;
+  /promo|package|(\b|_)boost(\b|_)|trial|vip|premium|\btop[\s_-]*ads?\b/i;
 const strongPromo = (v) => {
   const s = text(v);
   return STRONG_PROMO.test(s) || PROMO_TOKEN.test(s);
@@ -68,6 +68,9 @@ export function flattenFields(...groups) {
           options: f.values ?? f.options ?? f.items ?? null,
           value: f.value,
           type: f.type,
+          required: Boolean(
+            f.required ?? f.is_required ?? f.isRequired ?? f.mandatory,
+          ),
         });
       if (Array.isArray(f.fields)) visit(f.fields);
     }
@@ -233,6 +236,38 @@ function sortKeys(value) {
 export const canonicalJson = (value) => JSON.stringify(sortKeys(value));
 export const payloadHash = (value) =>
   createHash("sha256").update(canonicalJson(value)).digest("hex");
+
+// Canonical fingerprint of the live form schema, bound into payload_hash so a
+// form change between preview and confirm voids the approval. It covers every
+// flattened create/edit and category field: name, type, required, the full
+// option set (value/id + cost) and the selected option (value/id + cost).
+// Labels are left out on purpose: a pure label-text change (field or option)
+// is tolerated, while any change to a name, type, required flag, option
+// value/id, option membership, option cost or the selected option is not.
+export function formFingerprint(fields, body) {
+  const opt = (o) => ({ value: optionValue(o) ?? null, cost: optionCost(o) });
+  const key = (v) => JSON.stringify(v);
+  return fields
+    .map((f) => {
+      const options = Array.isArray(f.options)
+        ? f.options.map(opt).sort((a, b) => (key(a) < key(b) ? -1 : 1))
+        : null;
+      const picked =
+        options && f.name in body
+          ? f.options.find(
+              (o) => String(optionValue(o)) === String(body[f.name]),
+            )
+          : undefined;
+      return {
+        name: f.name,
+        type: f.type ?? null,
+        required: Boolean(f.required),
+        options,
+        selected: picked === undefined ? null : opt(picked),
+      };
+    })
+    .sort((a, b) => (key(a) < key(b) ? -1 : 1));
+}
 
 // Builds the exact submission and its human preview. `photos` must already be
 // resolved (see advert-photos.mjs): { existing_id } or { path, sha256, ... }.
@@ -407,6 +442,7 @@ export function buildAdvertSubmission({
     editing,
     advert_id: advertId,
     request,
+    form: formFingerprint(fields, body),
   });
   return {
     request,
@@ -449,8 +485,8 @@ function assertPrice(value) {
 }
 
 // Returns the first form field (other than the forced promo fields) whose
-// effective value costs money, or carries a strong paid/trial signal on a
-// control that itself looks like a promotion.
+// effective value costs money, is a promo term token such as "top_7", or
+// carries a strong paid/trial signal on a control that looks like a promotion.
 function paidLookingField(body, fields, forced) {
   for (const f of fields) {
     if (forced.has(f.name) || PHOTO_FIELD.test(f.name)) continue;
@@ -470,6 +506,11 @@ function paidLookingField(body, fields, forced) {
       );
       if (!picked) continue;
       if (optionCost(picked) > 0) return f;
+      if (
+        PROMO_TERM_TOKEN.test(String(value)) ||
+        PROMO_TERM_TOKEN.test(String(optionValue(picked)))
+      )
+        return f;
       const label = optionLabel(picked);
       if (FREE_OPTION.test(label)) continue;
       if (!strongPromo(label) && !strongPromo(value)) continue;

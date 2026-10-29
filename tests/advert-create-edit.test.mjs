@@ -48,11 +48,16 @@ async function tempPhotos(browser) {
 
 // Mock downloader (no network): returns a fetch-like response.
 const mockGet =
-  (bytes, { length = bytes.length } = {}) =>
+  (bytes, { length = bytes.length, type } = {}) =>
   async () => ({
     status: 200,
     headers: {
-      get: (k) => (k === "content-length" && length ? String(length) : null),
+      get: (k) =>
+        k === "content-length" && length
+          ? String(length)
+          : k === "content-type" && type
+            ? type
+            : null,
     },
     body: [bytes],
   });
@@ -347,6 +352,26 @@ test("photo URL download checks host, type and size", async () => {
     }),
     /public host/,
   );
+  // A declared Content-Type must be an image type, even if the bytes are a JPEG.
+  await assert.rejects(
+    downloadPhoto("https://cdn.example.com/a.jpg", {
+      get: mockGet(JPEG, { type: "text/html; charset=utf-8" }),
+    }),
+    /Content-Type text\/html, not a JPEG, PNG or WebP/,
+  );
+  // A declared image type still needs image bytes.
+  await assert.rejects(
+    downloadPhoto("https://cdn.example.com/a.jpg", {
+      get: mockGet(Buffer.from("<html>x</html>"), { type: "image/jpeg" }),
+    }),
+    /not a JPEG, PNG or WebP/,
+  );
+  const typed = await downloadPhoto("https://cdn.example.com/a.jpg", {
+    get: mockGet(JPEG, { type: "Image/JPEG; charset=binary" }),
+  });
+  assert.equal(typed.type, "image/jpeg");
+  await removeDownloaded([typed]);
+  // No Content-Type: magic bytes alone decide.
   const ok = await downloadPhoto("https://cdn.example.com/a.jpg", {
     get: mockGet(JPEG),
   });
@@ -539,6 +564,56 @@ test("confirm rejects expired, mismatched, wrong-plan and payload-changed tokens
   assert.equal(moved.state, "failed");
   assert.match(moved.result.error, /changed since the preview/);
   assert.equal(state.writes.length, 0);
+});
+
+test("approval binds the live form schema; label-only changes are tolerated", async () => {
+  const setup = async (mutate) => {
+    const { browser, state } = mockAdvertBrowser(JijiBrowser);
+    const plans = new ApprovalPlans();
+    const plan = prepareAdvertPlan(
+      plans,
+      await browser.prepareAdvert(solarCreate()),
+    );
+    mutate(state);
+    const result = await confirmAdvert(
+      plans,
+      (p) => browser.executeAdvert(p.parameters, p.payload_hash),
+      { approval_token: plan.approval_token, payload_hash: plan.payload_hash },
+    );
+    return { result, state };
+  };
+  const condition = (state) =>
+    state.category.fields.find((f) => f.name === "attr_condition");
+  const title = (state) => state.base.fields.find((f) => f.name === "title");
+
+  // 1. The selected attr_condition=new option is removed from the form.
+  // 2. The title field's type or required flag changes.
+  // 3. Another option's cost changes.
+  for (const mutate of [
+    (st) => {
+      condition(st).values = condition(st).values.filter(
+        (o) => o.value !== "new",
+      );
+    },
+    (st) => (title(st).required = true),
+    (st) => (title(st).type = "textarea"),
+    (st) => (condition(st).values[1].price = 100),
+  ]) {
+    const { result, state } = await setup(mutate);
+    assert.equal(result.state, "failed");
+    assert.match(result.result.error, /changed since the preview/);
+    assert.equal(state.writes.length, 0, "nothing is sent");
+    assert.equal(state.uploads.length, 0);
+  }
+
+  // Field and option label text changes alone still confirm.
+  const { result, state } = await setup((st) => {
+    title(st).label = "Ad title";
+    condition(st).label = "Item condition";
+    condition(st).values.find((o) => o.value === "new").label = "New";
+  });
+  assert.equal(result.state, "submitted");
+  assert.equal(state.writes.length, 1);
 });
 
 test("confirm marks a failed live re-read as failed, not uncertain", async () => {
@@ -944,6 +1019,26 @@ test("strong promo values still fail closed: hidden trial_14 and priced options"
     browser.prepareAdvert(solarCreate()),
     /looks like a paid promotion/,
   );
+  // A term token is refused on a bland control even when every option is free.
+  for (const token of ["top_7", "diamond_7"]) {
+    state.base.fields[state.base.fields.length - 1] = {
+      name: "attr_mode",
+      label: "Mode",
+      value: token,
+      values: [
+        { value: "std", label: "Standard" },
+        { value: token, label: "Top" },
+      ],
+    };
+    await assert.rejects(
+      browser.prepareAdvert(solarCreate()),
+      /"Mode" set to what looks like a paid promotion or trial/,
+      token,
+    );
+  }
+  // The same control with its free option selected is accepted.
+  state.base.fields.at(-1).value = "std";
+  await browser.prepareAdvert(solarCreate());
   assert.equal(state.writes.length, 0);
 });
 

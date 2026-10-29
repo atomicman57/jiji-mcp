@@ -47,6 +47,7 @@ export function sniffImage(b) {
   return null;
 }
 
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 function checkImage(bytes, label) {
@@ -235,6 +236,19 @@ async function fetchPhoto(url, { get, tmpDir, track, signal }) {
   if (Number(r.headers.get("content-length") || 0) > MAX_PHOTO_BYTES) {
     r.cancel?.();
     throw new Error("Photo at URL is larger than 10 MB.");
+  }
+  // A declared Content-Type must be an allowed image type (parameters such as
+  // "; charset=..." are ignored). When the header is missing, the magic-byte
+  // check below is the only type check. A declared type does not replace it.
+  const declared = String(r.headers.get("content-type") || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (declared && !IMAGE_TYPES.has(declared)) {
+    r.cancel?.();
+    throw new Error(
+      `Photo URL ${displayUrl(url)} returned Content-Type ${declared}, not a JPEG, PNG or WebP image.`,
+    );
   }
   const bytes = await readCapped(r.body || [], signal);
   const type = checkImage(bytes, displayUrl(url));
