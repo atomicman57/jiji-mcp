@@ -198,6 +198,8 @@ Set the variables on the companion and restart it. The relay worker does not cha
 
 The companion can run headless on Linux and dial out to the same relay. No tunnel is required. The approve page stays on `127.0.0.1`. Sign-in is a separate one-time unit. See [deploy/README.md](deploy/README.md) for the container, systemd units, and cutover checklist. Do not copy the Mac browser profile.
 
+To send browser traffic through an HTTPS proxy, set `JIJI_BROWSER_PROXY` (for example `https://<proxy-host>:89`) and, if the proxy needs them, `JIJI_BROWSER_PROXY_USERNAME` and `JIJI_BROWSER_PROXY_PASSWORD`. Credentials embedded in the URL also work; the explicit variables override them. Only the Playwright browser uses the proxy. The relay connection does not. Unset means direct egress. See [deploy/env.example](deploy/env.example).
+
 ## Development and tests
 
 ```sh

@@ -48,6 +48,53 @@ test("browser launch defaults to headed Chrome and can target headless system Ch
   );
 });
 
+test("browser proxy is optional and parses credentials without leaking them", () => {
+  assert.equal("proxy" in browserLaunchOptions({}), false);
+  assert.equal(
+    "proxy" in browserLaunchOptions({ JIJI_BROWSER_PROXY: "  " }),
+    false,
+  );
+  const server = "https://ng13.proxy.example:89";
+  assert.deepEqual(browserLaunchOptions({ JIJI_BROWSER_PROXY: server }).proxy, {
+    server,
+  });
+  assert.deepEqual(
+    browserLaunchOptions({
+      JIJI_BROWSER_PROXY: server,
+      JIJI_BROWSER_PROXY_USERNAME: "env-user",
+      JIJI_BROWSER_PROXY_PASSWORD: "env-pass",
+    }).proxy,
+    { server, username: "env-user", password: "env-pass" },
+  );
+  assert.deepEqual(
+    browserLaunchOptions({
+      JIJI_BROWSER_PROXY: "https://url%40user:p%3Ass@ng13.proxy.example:89/",
+    }).proxy,
+    { server, username: "url@user", password: "p:ss" },
+  );
+  assert.deepEqual(
+    browserLaunchOptions({
+      JIJI_BROWSER_PROXY: "https://url-user:url-pass@ng13.proxy.example:89",
+      JIJI_BROWSER_PROXY_USERNAME: "env-user",
+      JIJI_BROWSER_PROXY_PASSWORD: "env-pass",
+    }).proxy,
+    { server, username: "env-user", password: "env-pass" },
+  );
+  for (const bad of [
+    "not a url",
+    "ng13.proxy.example:89",
+    "ftp://ng13.proxy.example:21",
+    "https://secret-user:secret-pass@ng13.proxy.example:89/path",
+  ]) {
+    assert.throws(
+      () => browserLaunchOptions({ JIJI_BROWSER_PROXY: bad }),
+      (error) =>
+        /JIJI_BROWSER_PROXY/.test(error.message) &&
+        !/secret/.test(error.message),
+    );
+  }
+});
+
 test("the control page refuses any bind host except loopback", () => {
   assert.equal(loopbackBindHost(), "127.0.0.1");
   assert.equal(loopbackBindHost(""), "127.0.0.1");
@@ -121,6 +168,9 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   // The push feed ships documented but off: no uncommented push setting.
   assert.match(envExample, /^# JIJI_PUSH_WEBHOOK_URL=https:\/\//m);
   assert.doesNotMatch(envExample, /^JIJI_PUSH_/m);
+  // The browser proxy ships documented but off.
+  assert.match(envExample, /^# JIJI_BROWSER_PROXY=/m);
+  assert.doesNotMatch(envExample, /^JIJI_BROWSER_PROXY/m);
 });
 
 function runNode(script, args) {
