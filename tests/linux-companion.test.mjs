@@ -264,7 +264,7 @@ test("browser proxy bypass requires a proxy and non-empty hosts", () => {
     () => browserLaunchOptions({ JIJI_BROWSER_PROXY_BYPASS: "localhost" }),
     (error) =>
       error.message ===
-      "JIJI_BROWSER_PROXY_BYPASS requires JIJI_BROWSER_PROXY.",
+      "JIJI_BROWSER_PROXY_BYPASS requires JIJI_BROWSER_PROXY or JIJI_BROWSER_PROXIES.",
   );
   assert.throws(
     () =>
@@ -272,7 +272,7 @@ test("browser proxy bypass requires a proxy and non-empty hosts", () => {
         JIJI_BROWSER_PROXY: " ",
         JIJI_BROWSER_PROXY_BYPASS: "localhost",
       }),
-    /JIJI_BROWSER_PROXY_BYPASS requires JIJI_BROWSER_PROXY\./,
+    /JIJI_BROWSER_PROXY_BYPASS requires JIJI_BROWSER_PROXY or JIJI_BROWSER_PROXIES\./,
   );
   assert.equal(
     "proxy" in browserLaunchOptions({ JIJI_BROWSER_PROXY_BYPASS: "  " }),

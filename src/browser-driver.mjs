@@ -2,7 +2,7 @@ import { chromium } from "playwright";
 import fs from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { validatePath, listingUrl, chatUrl } from "./protocol.mjs";
-import { browserLaunchOptions } from "./runtime-policy.mjs";
+import { browserLaunchOptions, browserProxyList } from "./runtime-policy.mjs";
 import {
   buildRead,
   buildAction,
@@ -44,6 +44,61 @@ export function photoUploadPath(params = {}) {
 }
 
 const BROWSER_LAUNCH_FAILED = "browser launch failed (check proxy config)";
+const PROXY_NAVIGATION_FAILED =
+  "Jiji navigation failed through the browser proxy.";
+const HOME = "https://jiji.ng/";
+const NAVIGATION = { waitUntil: "domcontentloaded", timeout: 30000 };
+
+// Only consulted while a proxy is in use, so a navigation timeout counts as a
+// proxy failure there.
+export function isProxyFailure(error) {
+  if (error?.status === 407 || error?.name === "TimeoutError") return true;
+  const message = String(error?.message || "");
+  return (
+    /ERR_PROXY|ERR_TUNNEL_CONNECTION_FAILED|proxy/i.test(message) ||
+    /\b407\b/.test(message) ||
+    /Timeout \d+ms exceeded/.test(message)
+  );
+}
+
+// A Cloudflare block on the proxy's egress IP: a 403 marked
+// `cf-mitigated: challenge`, or the challenge page itself. An ordinary Jiji
+// error page is not a challenge.
+export function isCloudflareChallenge({
+  status,
+  headers = {},
+  title = "",
+  body = "",
+} = {}) {
+  const mitigated = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === "cf-mitigated",
+  );
+  if (status === 403 && /^\s*challenge\s*$/i.test(String(mitigated?.[1] || "")))
+    return true;
+  return (
+    /^\s*(Just a moment|Attention Required|Verify you are human)\b/i.test(
+      title,
+    ) || /\bcf-browser-verification\b/.test(body)
+  );
+}
+
+// Challenge pages are served as 403/429/503; other responses are never read.
+async function challenged(page, response) {
+  const status = response?.status?.();
+  if (![403, 429, 503].includes(status)) return false;
+  const [title, body] = await Promise.all([
+    page.title().catch(() => ""),
+    response.text().catch(() => ""),
+  ]);
+  return isCloudflareChallenge({
+    status,
+    headers: response.headers?.() || {},
+    title,
+    body,
+  });
+}
+
+class ProxyRejected extends Error {}
 
 export class JijiBrowser {
   constructor(profile) {
@@ -51,6 +106,8 @@ export class JijiBrowser {
     this.context = null;
     this.page = null;
     this.lastError = null;
+    this.proxies = null;
+    this.activeProxyIndex = null;
     this.queue = Promise.resolve();
     this.lastRequest = 0;
     this.conversations = new Map();
@@ -71,11 +128,9 @@ export class JijiBrowser {
       }
       try {
         this.page = await this.context.newPage();
-        await this.page.goto("https://jiji.ng/", {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
-        });
+        await this.page.goto(HOME, NAVIGATION);
       } catch (error) {
+        if (this.canFailOver(error)) return this.failOver();
         throw await this.startupFailed(error);
       }
       this.lastError = null;
@@ -83,36 +138,82 @@ export class JijiBrowser {
     }
     await fs.mkdir(this.profile, { recursive: true, mode: 0o700 });
     await fs.chmod(this.profile, 0o700);
-    // Config errors from browserLaunchOptions are fixed strings and pass through.
-    const options = browserLaunchOptions(process.env);
-    try {
-      this.context = await chromium.launchPersistentContext(
-        this.profile,
-        options,
-      );
-      this.context.on("close", () => {
-        this.context = null;
-        this.page = null;
-      });
-      this.page = this.context.pages()[0] || (await this.context.newPage());
-      await this.page.goto("https://jiji.ng/", {
-        waitUntil: "domcontentloaded",
-        timeout: 30000,
-      });
-    } catch (error) {
-      throw await this.startupFailed(error);
+    // Config errors are fixed strings and pass through. Every entry is
+    // validated before the first launch.
+    this.proxies = browserProxyList(process.env);
+    return this.launchFrom(0);
+  }
+  // Tries each proxy from `start` in order (or direct egress when none are
+  // configured). Proxy-class errors and Cloudflare challenges advance to the
+  // next entry; anything else, or running out of entries, is a launch failure.
+  async launchFrom(start) {
+    const proxies = this.proxies?.length ? this.proxies : [null];
+    for (let index = start; index < proxies.length; index++) {
+      const proxy = proxies[index];
+      const options = browserLaunchOptions(process.env, proxy);
+      try {
+        this.context = await chromium.launchPersistentContext(
+          this.profile,
+          options,
+        );
+        const context = this.context;
+        context.on("close", () => {
+          if (this.context !== context) return;
+          this.context = null;
+          this.page = null;
+        });
+        this.page = context.pages()[0] || (await context.newPage());
+        const response = await this.page.goto(HOME, NAVIGATION);
+        if (proxy && (await challenged(this.page, response)))
+          throw new ProxyRejected("challenge");
+      } catch (error) {
+        const proxyFailed =
+          proxy && (error instanceof ProxyRejected || isProxyFailure(error));
+        if (proxyFailed && index + 1 < proxies.length) {
+          console.error(
+            "browser proxy entry " + (index + 1) + " failed; trying the next",
+          );
+          await this.closeContext();
+          continue;
+        }
+        throw await this.startupFailed(error);
+      }
+      this.activeProxyIndex = proxy ? index : null;
+      this.lastError = null;
+      return this.page;
     }
-    this.lastError = null;
-    return this.page;
+  }
+  canFailOver(error) {
+    return (
+      this.activeProxyIndex !== null &&
+      this.activeProxyIndex + 1 < (this.proxies?.length || 0) &&
+      isProxyFailure(error)
+    );
+  }
+  // Mid-run: one pass over the entries after the failing one, no wrap-around.
+  async failOver() {
+    console.error(
+      "browser proxy entry " +
+        (this.activeProxyIndex + 1) +
+        " failed; trying the next",
+    );
+    const next = this.activeProxyIndex + 1;
+    await this.closeContext();
+    return this.launchFrom(next);
+  }
+  async closeContext() {
+    const context = this.context;
+    this.context = null;
+    this.page = null;
+    this.activeProxyIndex = null;
+    await context?.close().catch(() => {});
   }
   // Playwright launch and navigation messages can echo the proxy server or
   // credentials, so only the error name is logged, the half-open browser is
   // closed, and a fixed message reaches status/sockets.
   async startupFailed(error) {
     console.error("browser launch failed: " + (error?.name || "Error"));
-    await this.context?.close().catch(() => {});
-    this.context = null;
-    this.page = null;
+    await this.closeContext();
     this.lastError = BROWSER_LAUNCH_FAILED;
     return new Error(BROWSER_LAUNCH_FAILED);
   }
@@ -142,6 +243,7 @@ export class JijiBrowser {
         signed_in: false,
         login_in_progress: true,
         extension_required: false,
+        ...this.proxyStatus(),
         message:
           "Complete the sign-in provider flow in the browser. It will not be interrupted.",
       };
@@ -155,10 +257,19 @@ export class JijiBrowser {
       signed_in: signedIn,
       login_required: !signedIn,
       extension_required: false,
+      ...this.proxyStatus(),
       url: new URL(page.url()).origin,
       message: signedIn
         ? "Jiji account controls are visible in the browser."
         : "Complete login directly in the Jiji browser window.",
+    };
+  }
+  // Entry index (0-based) and host:port only; never credentials.
+  proxyStatus() {
+    if (this.activeProxyIndex === null) return {};
+    return {
+      proxy_index: this.activeProxyIndex,
+      proxy: this.proxies[this.activeProxyIndex].display,
     };
   }
   async login() {
@@ -305,12 +416,25 @@ export class JijiBrowser {
       }
     }, path);
   }
+  // A proxy-class navigation failure moves to the next proxy and retries once.
   async go(path) {
-    const page = await this.jijiPage();
-    await page.goto("https://jiji.ng" + path, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
+    let page = await this.jijiPage();
+    try {
+      await page.goto("https://jiji.ng" + path, NAVIGATION);
+    } catch (error) {
+      if (this.activeProxyIndex === null || !isProxyFailure(error)) throw error;
+      // Proxy errors can echo the proxy URL, so they never pass through raw.
+      if (!this.canFailOver(error)) throw new Error(PROXY_NAVIGATION_FAILED);
+      await this.failOver();
+      page = await this.jijiPage();
+      try {
+        await page.goto("https://jiji.ng" + path, NAVIGATION);
+      } catch (retryError) {
+        if (this.activeProxyIndex === null || !isProxyFailure(retryError))
+          throw retryError;
+        throw new Error(PROXY_NAVIGATION_FAILED);
+      }
+    }
     return page;
   }
   async inbox() {
