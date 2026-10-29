@@ -22,6 +22,7 @@ import { socketPath } from "./bridge.mjs";
 import { loopbackBindHost } from "./runtime-policy.mjs";
 import { validatePath } from "./protocol.mjs";
 import { buildAction, buildRead, workflows } from "./catalog.mjs";
+import { startPushNotifications } from "./push-notifications.mjs";
 const runtime = path.dirname(socketPath);
 await fs.mkdir(runtime, { recursive: true, mode: 0o700 });
 await fs.chmod(runtime, 0o700);
@@ -65,6 +66,7 @@ let enabled = config.enabled !== false,
   cloudError = "",
   cloudAbort,
   identity,
+  push,
   pairingCode = "";
 const session = randomBytes(32).toString("hex"),
   csrf = randomBytes(32).toString("hex");
@@ -81,6 +83,7 @@ async function action(m) {
       cloud_transport: "hibernating-websocket",
       auto_approve: settings.autoApprove,
       hourly_send_cap: settings.hourlySendCap,
+      push_notifications: push?.status() ?? { enabled: false },
     };
   if (m.action === "login") return browser.run(() => browser.login());
   if (!enabled)
@@ -395,8 +398,17 @@ await new Promise((resolve, reject) => {
 await fs.chmod(socketPath, 0o600);
 console.error("Jiji companion ready at " + origin);
 void startCloud();
+// Notify-only. Off unless JIJI_PUSH_WEBHOOK_URL and _AUTH_VALUE are set; a
+// bad value logs a reason and leaves it off. It never throws.
+push = await startPushNotifications({
+  env: process.env,
+  runtimeDir: runtime,
+  browser,
+  isEnabled: () => enabled,
+});
 const stop = async () => {
   enabled = false;
+  await push.stop();
   cloudAbort?.abort();
   await browser.close();
   server.close();

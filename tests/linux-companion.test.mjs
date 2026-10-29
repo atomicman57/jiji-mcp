@@ -118,6 +118,9 @@ test("Linux packaging stays loopback-only, non-root, and single-companion", asyn
   assert.match(wrangler, /"class_name": "JijiBridge"/);
   const envExample = await text("deploy/env.example");
   assert.doesNotMatch(envExample, /^JIJI_HOURLY_SEND_CAP=/m);
+  // The push feed ships documented but off: no uncommented push setting.
+  assert.match(envExample, /^# JIJI_PUSH_WEBHOOK_URL=https:\/\//m);
+  assert.doesNotMatch(envExample, /^JIJI_PUSH_/m);
 });
 
 function runNode(script, args) {

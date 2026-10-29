@@ -5,6 +5,7 @@ import path from "node:path";
 
 const HOUR_MS = 60 * 60 * 1000;
 export const DEFAULT_DEDUPE_MS = 10 * 60 * 1000;
+export const MAX_DEDUPE_MS = 24 * HOUR_MS;
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 const FALSY = new Set(["0", "false", "no", "off"]);
@@ -20,12 +21,12 @@ function flag(value, fallback, name) {
   if (FALSY.has(text)) return false;
   throw new Error(name + " must be true or false.");
 }
-function count(value, fallback, name) {
+function count(value, fallback, name, { max = 100000 } = {}) {
   if (!defined(value)) return fallback;
   const number =
     typeof value === "number" ? value : Number(String(value).trim());
-  if (!Number.isInteger(number) || number < 0 || number > 100000)
-    throw new Error(name + " must be a non-negative integer.");
+  if (!Number.isInteger(number) || number < 0 || number > max)
+    throw new Error(name + ` must be a non-negative integer up to ${max}.`);
   return number;
 }
 
@@ -58,6 +59,7 @@ export function readSendSettings(env = {}, config = {}) {
         : config.JIJI_SEND_DEDUPE_MS,
       DEFAULT_DEDUPE_MS,
       "JIJI_SEND_DEDUPE_MS",
+      { max: MAX_DEDUPE_MS },
     ),
   };
 }

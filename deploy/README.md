@@ -114,3 +114,5 @@ Run these on the machines named in each step. Do not copy `~/Library/Application
    ```
 
 9. Confirm the Mac agent is still disabled and only `jiji-mcp.service` is active. Set `JIJI_AUTO_APPROVE=true` in `/etc/jiji-mcp/env` only if prepared messages should send without the approve page, then `sudo systemctl restart jiji-mcp.service`. Leave `JIJI_SEND_LOG_TEXT` unset or `false` so the send log stores a hash and a length. Leave `JIJI_HOURLY_SEND_CAP` unset for no hourly limit, or set it to a number if you want that limit.
+
+10. Optional, and only with the owner's go-ahead: enable the notify-only push feed by setting `JIJI_PUSH_WEBHOOK_URL` and `JIJI_PUSH_WEBHOOK_AUTH_VALUE` (plus `JIJI_PUSH_WEBHOOK_AUTH_HEADER` if the receiver does not use `Authorization`) in `/etc/jiji-mcp/env`, then restart `jiji-mcp.service`. State is kept in `/data/push-notifications`. Check `journalctl -u jiji-mcp.service` for `[jiji-push] info push notifications enabled` with the webhook host, or for the reason it stayed off. The first poll baselines and sends nothing. See the README section on push notifications.

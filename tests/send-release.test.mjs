@@ -114,6 +114,33 @@ test("send settings default off and environment overrides config", () => {
   );
 });
 
+test("the dedupe window accepts the documented 10 minutes and has its own bound", () => {
+  // deploy/env.example sets JIJI_SEND_DEDUPE_MS=600000.
+  assert.equal(
+    readSendSettings({ JIJI_SEND_DEDUPE_MS: "600000" }).dedupeMs,
+    600000,
+  );
+  assert.equal(
+    readSendSettings({ JIJI_SEND_DEDUPE_MS: String(24 * 60 * 60 * 1000) })
+      .dedupeMs,
+    24 * 60 * 60 * 1000,
+  );
+  for (const bad of ["-1", "1.5", "abc", String(24 * 60 * 60 * 1000 + 1)])
+    assert.throws(
+      () => readSendSettings({ JIJI_SEND_DEDUPE_MS: bad }),
+      /JIJI_SEND_DEDUPE_MS must be a non-negative integer/,
+      bad,
+    );
+  assert.equal(
+    readSendSettings({ JIJI_HOURLY_SEND_CAP: "100000" }).hourlySendCap,
+    100000,
+  );
+  assert.throws(
+    () => readSendSettings({ JIJI_HOURLY_SEND_CAP: "100001" }),
+    /JIJI_HOURLY_SEND_CAP must be a non-negative integer up to 100000/,
+  );
+});
+
 test("an unset hourly cap does not limit sends, and a set cap does", async () => {
   assert.equal(readSendSettings().hourlySendCap, null);
   assert.equal(
