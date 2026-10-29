@@ -36,9 +36,11 @@ const PHOTO_FIELD = /^(images|image_ids|photos|photo_ids)$/;
 const STRONG_PROMO =
   /\bfree\s*trial\b|\b(top|boost|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b/i;
 const PROMO_TOKEN = /^(trial|top|boost|vip|premium|diamond)_\w+$/i;
-// A token with a numeric term ("trial_14", "top_7") is a promo selection on
-// any control, whatever its name, label or options say.
-const PROMO_TERM_TOKEN = /^(trial|top|boost|vip|premium|diamond)_\d+$/i;
+// A whole value that is a promo term ("trial_14", "top-7", "top 7",
+// "boost 14 days") is a promo selection on any control, whatever its name,
+// label or options say. Bare "Boost" or embedded "model-top_7-edition" pass.
+const PROMO_TERM_TOKEN =
+  /^(trial|top|boost|vip|premium|diamond)[ _-]?\d+(\s*(days?|weeks?|months?))?$/i;
 const PROMO_CONTROL =
   /promo|package|(\b|_)boost(\b|_)|trial|vip|premium|\btop[\s_-]*ads?\b/i;
 const strongPromo = (v) => {
@@ -215,6 +217,25 @@ function negotiableValue(field, negotiable) {
   return optionValue(pick);
 }
 
+// Ancestor name path (root first) of category `id` in Jiji's live category
+// tree, or null when the tree does not list it. Bound into payload_hash so a
+// remapped id or a renamed category voids the approval.
+export function categoryPathForId(tree, id) {
+  const walk = (level, trail) => {
+    for (const c of Array.isArray(level) ? level : []) {
+      const names = [...trail, text(c?.name ?? c?.title ?? c?.label)];
+      if (String(c?.id ?? c?.category_id) === String(id)) return names;
+      const found = walk(
+        c?.children ?? c?.subcategories ?? c?.categories,
+        names,
+      );
+      if (found) return found;
+    }
+    return null;
+  };
+  return walk(tree, []);
+}
+
 export function existingPhotoIds(field) {
   const value = Array.isArray(field?.value) ? field.value : [];
   return value
@@ -240,12 +261,18 @@ export const payloadHash = (value) =>
 // Canonical fingerprint of the live form schema, bound into payload_hash so a
 // form change between preview and confirm voids the approval. It covers every
 // flattened create/edit and category field: name, type, required, the full
-// option set (value/id + cost) and the selected option (value/id + cost).
-// Labels are left out on purpose: a pure label-text change (field or option)
-// is tolerated, while any change to a name, type, required flag, option
-// value/id, option membership, option cost or the selected option is not.
+// option set (value, id and cost) and the selected option (value, id, cost).
+// The option id is recorded separately from the submitted value, so an id
+// change under the same value is caught. Labels are left out on purpose: a
+// pure label-text change (field or option) is tolerated, while any change to
+// a name, type, required flag, option value or id, option membership, option
+// cost or the selected option is not.
 export function formFingerprint(fields, body) {
-  const opt = (o) => ({ value: optionValue(o) ?? null, cost: optionCost(o) });
+  const opt = (o) => ({
+    value: optionValue(o) ?? null,
+    id: o && typeof o === "object" ? (o.id ?? null) : null,
+    cost: optionCost(o),
+  });
   const key = (v) => JSON.stringify(v);
   return fields
     .map((f) => {
@@ -278,6 +305,7 @@ export function buildAdvertSubmission({
   advertId,
   editing,
   photos,
+  categoryNames = null,
 }) {
   const fields = flattenFields(category.fields, base.fields);
   const byName = new Map(fields.map((f) => [f.name, f]));
@@ -352,6 +380,10 @@ export function buildAdvertSubmission({
   assertNoPaidPrefill(body, fields, promoForced);
 
   let photoField = fields.find((f) => PHOTO_FIELD.test(f.name));
+  // The live existing photo ids, in Jiji's order. Bound into payload_hash so a
+  // photo added, removed or reordered on Jiji after the preview voids it.
+  const livePhotoIds =
+    editing && photoField ? existingPhotoIds(photoField) : [];
   let photoPreview = [];
   let photoNotice;
   if (parameters.remove_all_photos && !(photos && photos.length === 0))
@@ -443,6 +475,8 @@ export function buildAdvertSubmission({
     advert_id: advertId,
     request,
     form: formFingerprint(fields, body),
+    category: { id: body.category_id ?? null, path: categoryNames },
+    existing_photo_ids: livePhotoIds,
   });
   return {
     request,

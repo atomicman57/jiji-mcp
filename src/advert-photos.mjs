@@ -238,8 +238,8 @@ async function fetchPhoto(url, { get, tmpDir, track, signal }) {
     throw new Error("Photo at URL is larger than 10 MB.");
   }
   // A declared Content-Type must be an allowed image type (parameters such as
-  // "; charset=..." are ignored). When the header is missing, the magic-byte
-  // check below is the only type check. A declared type does not replace it.
+  // "; charset=..." and case are ignored) and must match the magic bytes.
+  // When the header is missing, the magic-byte check is the only type check.
   const declared = String(r.headers.get("content-type") || "")
     .split(";")[0]
     .trim()
@@ -252,6 +252,10 @@ async function fetchPhoto(url, { get, tmpDir, track, signal }) {
   }
   const bytes = await readCapped(r.body || [], signal);
   const type = checkImage(bytes, displayUrl(url));
+  if (declared && declared !== type)
+    throw new Error(
+      `Photo URL ${displayUrl(url)} declared Content-Type ${declared} but the file is ${type}.`,
+    );
   const dir = await fs.mkdtemp(path.join(tmpDir || os.tmpdir(), TEMP_PREFIX));
   const file = path.join(dir, randomBytes(8).toString("hex") + "." + EXT[type]);
   await fs.writeFile(file, bytes, { mode: 0o600 });

@@ -32,7 +32,7 @@ export function baseForm({ editing = false, images = [] } = {}) {
       modify_advert_url: `/api_web/v1/item/modify/${editing ? 77 : 12}.json`,
       upload_image_url: "/api_web/v1/item-create/upload-image.json",
     },
-    categories,
+    categories: structuredClone(categories),
     fields: [
       { name: "title", label: "Title" },
       { name: "description", label: "Description" },

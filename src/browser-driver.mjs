@@ -12,6 +12,7 @@ import {
 import {
   assertFreeOnly,
   buildAdvertSubmission,
+  categoryPathForId,
   categoryTree,
   resolveCategoryPath,
 } from "./advert-form.mjs";
@@ -902,8 +903,8 @@ export class JijiBrowser {
     )
       throw new Error("Jiji advert submission route changed.");
     let categoryId = parameters.category_id;
+    const tree = categoryTree(base.body);
     if (!categoryId) {
-      const tree = categoryTree(base.body);
       if (!tree)
         throw new Error(
           "Jiji's form did not include a category list. Pass category_id.",
@@ -932,6 +933,7 @@ export class JijiBrowser {
       advertId: id,
       editing,
       photos,
+      categoryNames: tree ? categoryPathForId(tree, categoryId) : null,
     });
     return {
       operation: "submit_advert",

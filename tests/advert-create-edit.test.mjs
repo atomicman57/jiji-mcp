@@ -1085,3 +1085,212 @@ test("a stored token hash of the wrong length is an unknown token, not a crash",
   );
   assert.equal(plans.get(plan.id).state, "pending");
 });
+
+// Prepares `params` against a fresh mock, applies `after` to the live forms,
+// then confirms with the previewed token and hash.
+async function confirmAfterChange({ options, before, params, after }) {
+  const { browser, state } = mockAdvertBrowser(JijiBrowser, options);
+  before?.(state);
+  const plans = new ApprovalPlans();
+  const plan = prepareAdvertPlan(
+    plans,
+    await browser.prepareAdvert(params ?? solarCreate()),
+  );
+  after(state);
+  const result = await confirmAdvert(
+    plans,
+    (p) => browser.executeAdvert(p.parameters, p.payload_hash),
+    { approval_token: plan.approval_token, payload_hash: plan.payload_hash },
+  );
+  return { result, state };
+}
+
+const assertRefused = ({ result, state }, message) => {
+  assert.equal(result.state, "failed", message);
+  assert.match(result.result.error, /changed since the preview/, message);
+  assert.equal(state.writes.length, 0, message);
+  assert.equal(state.uploads.length, 0, message);
+};
+
+const conditionField = (state) =>
+  state.category.fields.find((f) => f.name === "attr_condition");
+
+test("promo term tokens with hyphen, space or day suffix are refused on a bland control", async () => {
+  const { browser, state } = mockAdvertBrowser(JijiBrowser);
+  state.base.fields.push({ name: "attr_mode", label: "Mode" });
+  for (const token of [
+    "top-7",
+    "top 7",
+    "trial-7",
+    "diamond-7",
+    "top 7 days",
+  ]) {
+    state.base.fields[state.base.fields.length - 1] = {
+      name: "attr_mode",
+      label: "Mode",
+      value: token,
+      values: [
+        { value: "std", label: "Standard" },
+        { value: token, label: "Standard plus" },
+      ],
+    };
+    await assert.rejects(
+      browser.prepareAdvert(solarCreate()),
+      /"Mode" set to what looks like a paid promotion or trial/,
+      token,
+    );
+  }
+  // Bare Boost/Boost Pro/promoted and an embedded token still pass.
+  state.base.fields[state.base.fields.length - 1] = {
+    name: "attr_model",
+    label: "Model",
+    values: [
+      { value: "Boost", label: "Boost" },
+      { value: "Boost Pro", label: "Boost Pro" },
+      { value: "promoted", label: "promoted" },
+    ],
+  };
+  state.base.fields.push({ name: "attr_series", label: "Series" });
+  for (const model of ["Boost", "Boost Pro", "promoted"])
+    await browser.prepareAdvert(
+      solarCreate({
+        fields: {
+          ...solarCreate().fields,
+          attr_model: model,
+          attr_series: "model-top_7-edition",
+        },
+      }),
+    );
+  assert.equal(state.writes.length, 0);
+});
+
+test("an option id change under the same value voids the approval", async () => {
+  const outcome = await confirmAfterChange({
+    before: (st) =>
+      conditionField(st).values.forEach((o, i) => (o.id = 10 + i)),
+    after: (st) => {
+      conditionField(st).values.find((o) => o.value === "new").id = 99;
+    },
+  });
+  assertRefused(outcome);
+});
+
+test("a category id remapped to another path after the preview voids the approval", async () => {
+  const outcome = await confirmAfterChange({
+    after: (st) => {
+      st.base.categories[0].children.find(
+        (c) => c.name === "Electrical Equipment",
+      ).id = 9999;
+    },
+  });
+  assertRefused(outcome);
+});
+
+test("a category renamed at the previewed id voids the approval", async () => {
+  const outcome = await confirmAfterChange({
+    params: { ...solarCreate(), category_path: undefined, category_id: 1083 },
+    after: (st) => {
+      st.base.categories[0].children.find((c) => c.id === 1083).name =
+        "Plumbing";
+    },
+  });
+  assertRefused(outcome);
+});
+
+test("a live photo added on Jiji after an edit preview voids the approval", async () => {
+  const outcome = await confirmAfterChange({
+    options: {
+      editing: true,
+      images: [
+        { id: 901, url: "https://pictures.example/901.jpg" },
+        { id: 902, url: "https://pictures.example/902.jpg" },
+      ],
+    },
+    params: {
+      advert_id: 77,
+      category_id: 1083,
+      region_id: 4,
+      fields: { title: "Edited panel", description: "Updated mock" },
+      photos: [{ existing_id: 901 }, { existing_id: 902 }],
+    },
+    after: (st) =>
+      st.base.fields
+        .find((f) => f.name === "images")
+        .value.push({ id: 903, url: "https://pictures.example/903.jpg" }),
+  });
+  assertRefused(outcome);
+});
+
+test("a declared photo Content-Type must match the magic bytes", async () => {
+  for (const type of ["image/png", "Image/PNG; charset=binary"])
+    await assert.rejects(
+      downloadPhoto("https://cdn.example.com/a.png", {
+        get: mockGet(JPEG, { type }),
+      }),
+      /declared Content-Type image\/png but the file is image\/jpeg/,
+      type,
+    );
+  const png = await downloadPhoto("https://cdn.example.com/a.png", {
+    get: mockGet(PNG, { type: "image/png" }),
+  });
+  assert.equal(png.type, "image/png");
+  await removeDownloaded([png]);
+});
+
+test("photo URLs declaring SVG or GIF are refused whatever the body", async () => {
+  for (const type of ["image/svg+xml", "image/gif"])
+    for (const body of [JPEG, Buffer.from("GIF89a<svg/>")])
+      await assert.rejects(
+        downloadPhoto("https://cdn.example.com/a", {
+          get: mockGet(body, { type }),
+        }),
+        /not a JPEG, PNG or WebP/,
+        type,
+      );
+});
+
+test("a 'Signal booster' attribute is not a promo control; a boost control is", async () => {
+  const { browser, state } = mockAdvertBrowser(JijiBrowser);
+  const value = "Boost for 14 days";
+  state.base.fields.push({
+    name: "attr_signal_booster",
+    label: "Signal booster",
+    value,
+  });
+  await browser.prepareAdvert(solarCreate());
+  state.base.fields[state.base.fields.length - 1] = {
+    name: "attr-boost-mode",
+    label: "Mode",
+    value,
+  };
+  await assert.rejects(
+    browser.prepareAdvert(solarCreate()),
+    /"Mode" set to what looks like a paid promotion or trial/,
+  );
+  assert.equal(state.writes.length, 0);
+});
+
+test("an option added to a select after the preview voids the approval", async () => {
+  const outcome = await confirmAfterChange({
+    after: (st) =>
+      conditionField(st).values.push({ value: "refurb", label: "Refurbished" }),
+  });
+  assertRefused(outcome);
+});
+
+test("swapping option ids under an unchanged submitted value voids the approval", async () => {
+  // The body still submits attr_condition "new", so a body-only hash would
+  // match; the option set and selected option fingerprint do not.
+  const outcome = await confirmAfterChange({
+    before: (st) => {
+      const [n, u] = conditionField(st).values;
+      n.id = 1;
+      u.id = 2;
+    },
+    after: (st) => {
+      const [n, u] = conditionField(st).values;
+      [n.id, u.id] = [u.id, n.id];
+    },
+  });
+  assertRefused(outcome);
+});
