@@ -67,6 +67,7 @@ async function harness(t, env, plan) {
         return step === undefined ? response(200) : step;
       },
       locator: () => ({ count: async () => 0 }),
+      bringToFront: async () => {},
     };
     let closeHandler;
     return {
@@ -273,6 +274,118 @@ test("a later proxy-class navigation failure moves to the next proxy and retries
   assert.equal(attempts.length, 2);
 });
 
+const NAV_FAILED = "Jiji navigation failed through the browser proxy.";
+const CREDENTIAL_LEAK = /secret-user|secret-pass|:secret-pass@/;
+
+test("login navigation through a proxy never surfaces raw Playwright text", async (t) => {
+  const { browser, attempts, logged } = await harness(
+    t,
+    { JIJI_BROWSER_PROXIES: A + "," + B },
+    {},
+  );
+  await browser.open();
+  const raw = new Error(
+    "page.goto: net::ERR_PROXY_CONNECTION_FAILED at https://jiji.ng/login.html via http://secret-user:secret-pass@ng13.proxy.example:89",
+  );
+  browser.page.goto = async () => {
+    throw raw;
+  };
+  // Fails over to B, where the retry fails the same way.
+  const original = chromium.launchPersistentContext;
+  chromium.launchPersistentContext = async (...args) => {
+    const context = await original(...args);
+    const page = await context.newPage();
+    let first = true;
+    page.goto = async (target) => {
+      if (first) {
+        first = false;
+        return response(200);
+      }
+      throw raw;
+    };
+    return context;
+  };
+  await assert.rejects(browser.login(), (error) => {
+    assert.equal(error.message, NAV_FAILED);
+    assert.doesNotMatch(error.message, CREDENTIAL_LEAK);
+    return true;
+  });
+  assert.deepEqual(
+    attempts.map((proxy) => proxy.server),
+    [A, B],
+  );
+  assert.doesNotMatch(logged.join("\n"), CREDENTIAL_LEAK);
+  assert.doesNotMatch(logged.join("\n"), LEAK);
+  assert.doesNotMatch(JSON.stringify(await browser.status()), CREDENTIAL_LEAK);
+});
+
+test("login on the last proxy maps any navigation error to the fixed message", async (t) => {
+  const { browser, attempts, logged } = await harness(
+    t,
+    { JIJI_BROWSER_PROXIES: A },
+    {},
+  );
+  await browser.open();
+  browser.page.goto = async () => {
+    throw new Error(
+      "page.goto: net::ERR_PROXY_CONNECTION_FAILED via http://secret-user:secret-pass@ng13.proxy.example:89",
+    );
+  };
+  await assert.rejects(browser.login(), { message: NAV_FAILED });
+  assert.equal(attempts.length, 1);
+  assert.doesNotMatch(logged.join("\n"), CREDENTIAL_LEAK);
+  assert.doesNotMatch(JSON.stringify(await browser.status()), CREDENTIAL_LEAK);
+});
+
+test("a non-proxy navigation error while proxied is fixed text and does not fail over", async (t) => {
+  const { browser, attempts } = await harness(
+    t,
+    { JIJI_BROWSER_PROXIES: A + "," + B },
+    {},
+  );
+  await browser.open();
+  browser.page.goto = async () => {
+    throw new Error(
+      "page.goto: net::ERR_NAME_NOT_RESOLVED via http://secret-user:secret-pass@ng13.example:89",
+    );
+  };
+  await assert.rejects(browser.go("/profile-messages"), (error) => {
+    assert.equal(error.message, NAV_FAILED);
+    return true;
+  });
+  assert.equal(attempts.length, 1);
+  assert.equal(browser.activeProxyIndex, 0);
+});
+
+test("a navigation error without a proxy passes through unchanged", async (t) => {
+  const { browser } = await harness(t, {}, {});
+  await browser.open();
+  browser.page.goto = async () => {
+    throw new Error("page.goto: net::ERR_NAME_NOT_RESOLVED");
+  };
+  await assert.rejects(browser.go("/profile-messages"), {
+    message: "page.goto: net::ERR_NAME_NOT_RESOLVED",
+  });
+});
+
+test("the proxy list is capped at 16 entries without echoing values", () => {
+  const entries = (count) =>
+    Array.from(
+      { length: count },
+      (_, i) => "https://secret-user:secret-pass@ng" + i + ".proxy.example:89",
+    ).join(",");
+  assert.equal(
+    browserProxyList({ JIJI_BROWSER_PROXIES: entries(16) }).length,
+    16,
+  );
+  assert.throws(
+    () => browserProxyList({ JIJI_BROWSER_PROXIES: entries(17) }),
+    (error) =>
+      error.message === "JIJI_BROWSER_PROXIES supports at most 16 entries." &&
+      !/secret|proxy\.example/.test(error.message),
+  );
+});
+
 test("proxy list parsing accepts comma or newline lists and names only the entry", () => {
   const list = browserProxyList({
     JIJI_BROWSER_PROXIES: A + ",\n" + B + "\r\n" + C + "\n",
@@ -422,5 +535,22 @@ test("proxy failure and Cloudflare challenge detection stay tight", () => {
       title: "Jiji.ng: just a moment of your time",
     }),
     false,
+  );
+  // Title and body matches still require a challenge status.
+  assert.equal(
+    isCloudflareChallenge({ status: 200, title: "Just a moment..." }),
+    false,
+  );
+  assert.equal(
+    isCloudflareChallenge({
+      status: 200,
+      body: '<div class="cf-browser-verification"></div>',
+    }),
+    false,
+  );
+  assert.equal(isCloudflareChallenge({ title: "Just a moment..." }), false);
+  assert.equal(
+    isCloudflareChallenge({ status: 429, title: "Just a moment..." }),
+    true,
   );
 });

@@ -62,14 +62,15 @@ export function isProxyFailure(error) {
 }
 
 // A Cloudflare block on the proxy's egress IP: a 403 marked
-// `cf-mitigated: challenge`, or the challenge page itself. An ordinary Jiji
-// error page is not a challenge.
+// `cf-mitigated: challenge`, or the challenge page itself served as
+// 403/429/503. An ordinary Jiji error page is not a challenge.
 export function isCloudflareChallenge({
   status,
   headers = {},
   title = "",
   body = "",
 } = {}) {
+  if (![403, 429, 503].includes(status)) return false;
   const mitigated = Object.entries(headers).find(
     ([name]) => name.toLowerCase() === "cf-mitigated",
   );
@@ -273,10 +274,8 @@ export class JijiBrowser {
     };
   }
   async login() {
-    const p = await this.open();
-    await p.goto("https://jiji.ng/login.html", {
-      waitUntil: "domcontentloaded",
-    });
+    // The page may be mid sign-in on another origin, so not jijiPage().
+    const p = await this.navigate("/login.html", () => this.open());
     await p.bringToFront();
     return {
       opened: true,
@@ -416,22 +415,24 @@ export class JijiBrowser {
       }
     }, path);
   }
-  // A proxy-class navigation failure moves to the next proxy and retries once.
   async go(path) {
-    let page = await this.jijiPage();
+    return this.navigate(path, () => this.jijiPage());
+  }
+  // While a proxy is active a failed navigation never surfaces Playwright's
+  // text, which can echo the proxy URL. A proxy-class failure moves to the
+  // next proxy and retries once; anything else is the fixed error.
+  async navigate(path, acquire) {
+    let page = await acquire();
     try {
       await page.goto("https://jiji.ng" + path, NAVIGATION);
     } catch (error) {
-      if (this.activeProxyIndex === null || !isProxyFailure(error)) throw error;
-      // Proxy errors can echo the proxy URL, so they never pass through raw.
+      if (this.activeProxyIndex === null) throw error;
       if (!this.canFailOver(error)) throw new Error(PROXY_NAVIGATION_FAILED);
       await this.failOver();
-      page = await this.jijiPage();
+      page = await acquire();
       try {
         await page.goto("https://jiji.ng" + path, NAVIGATION);
-      } catch (retryError) {
-        if (this.activeProxyIndex === null || !isProxyFailure(retryError))
-          throw retryError;
+      } catch {
         throw new Error(PROXY_NAVIGATION_FAILED);
       }
     }

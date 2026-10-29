@@ -175,6 +175,8 @@ export function browserProxyList(env = {}) {
     throw new Error(
       "JIJI_BROWSER_PROXIES must be a comma- or newline-separated URL list with no empty entries.",
     );
+  if (entries.length > 16)
+    throw new Error("JIJI_BROWSER_PROXIES supports at most 16 entries.");
   return entries.map((raw, index) =>
     parseProxy(raw, "JIJI_BROWSER_PROXIES entry " + (index + 1), env, bypass),
   );
