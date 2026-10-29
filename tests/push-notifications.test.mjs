@@ -15,6 +15,7 @@ import {
   DEFAULT_OUTBOX_MAX,
   DEFAULT_POLL_MS,
   MAX_POLL_MS,
+  MAX_PUSH_PAGES,
   MIN_POLL_MS,
   OUTBOX_MAX_AGE_MS,
   PUSH_READS,
@@ -304,7 +305,7 @@ test("new chat, offer, and ad status transitions produce stable events", () => {
         id: 8,
         type: "advert_declined",
         text: "Your ad was declined",
-        advert: { id: 99, title: "Car" },
+        advert: { id: 101, title: "Bike" },
       },
       { id: 9, type: "promo", text: "Boost your ad" },
       { id: 10, type: "chat_offer", text: "New offer" },
@@ -534,9 +535,9 @@ test("signed out, disconnected, or browser error skips the tick and keeps state"
   });
 });
 
-test("failed deliveries back off and retry; 3xx is not followed", async (t) => {
+test("retryable delivery failures back off and retry", async (t) => {
   let rooms = [room(1, 10)];
-  let code = 302;
+  let code = 503;
   const h = await harness(t, {
     responses: {
       chat_rooms: () => ok({ status: "ok", results: rooms }),
@@ -565,7 +566,7 @@ test("failed deliveries back off and retry; 3xx is not followed", async (t) => {
   await h.push.outbox.kick();
   assert.equal(h.fetch.calls.length, 3);
   assert.equal(h.push.store.depth(), 0);
-  assert.ok(h.lines.some((l) => l.includes("webhook_http_302")));
+  assert.ok(h.lines.some((l) => l.includes("webhook_http_503")));
 });
 
 test("backoff schedule matches min(300, 2 ** min(attempts + 1, 9))", () => {
@@ -784,4 +785,256 @@ test("stop clears the poll timer and outbox timer", async (t) => {
   await h.push.stop();
   assert.deepEqual(await h.push.tick(), { skipped: "stopped" });
   assert.equal(h.push.outbox.timer, undefined);
+});
+
+// --- Review fixes ------------------------------------------------------------
+
+const fresh = () => ({
+  baselined: {},
+  rooms: {},
+  notifications: {},
+  adverts: {},
+});
+
+test("only true, a positive amount, or an offer kind counts as an offer", () => {
+  const base = detectEvents(fresh(), { rooms: [room(1, 10)] }, 1000).next;
+  const typeOf = (last) =>
+    detectEvents(
+      base,
+      { rooms: [room(1, 11, { last_message: { id: 11, ...last } })] },
+      2000,
+    ).events[0].type;
+  for (const last of [{ offer: false }, { offer: 0 }, { offer: "" }])
+    assert.equal(typeOf(last), "chat_message", JSON.stringify(last));
+  for (const last of [
+    { offer: true },
+    { offer: 5000 },
+    { offer_amount: "2500" },
+    { offer: { amount: 1200 } },
+    { type: "offer" },
+    { message_type: "make_offer", offer: 0 },
+  ])
+    assert.equal(typeOf(last), "offer", JSON.stringify(last));
+});
+
+test("a room with unknown unread never alerts; a known unread does", () => {
+  const noCount = (id, msg) => {
+    const r = room(id, msg);
+    delete r.unread_count;
+    return r;
+  };
+  const base = detectEvents(
+    fresh(),
+    { rooms: [noCount(1, 10), room(2, 20)] },
+    1000,
+  ).next;
+  const { events } = detectEvents(
+    base,
+    { rooms: [noCount(1, 11), room(2, 21, { unread_count: 1 })] },
+    2000,
+  );
+  assert.deepEqual(
+    events.map((e) => e.event_id),
+    ["jiji:chat_message:2:id:21"],
+  );
+});
+
+test("an approval seen in my_adverts and notifications alerts once", () => {
+  const base = detectEvents(
+    fresh(),
+    {
+      notifications: [],
+      adverts: [{ id: 99, status: "on_review", title: "Car" }],
+    },
+    1000,
+  ).next;
+  const { events } = detectEvents(
+    base,
+    {
+      notifications: [
+        {
+          id: 8,
+          type: "advert_approved",
+          text: "Your ad was approved",
+          advert: { id: 99, title: "Car" },
+        },
+      ],
+      adverts: [{ id: 99, status: "active", title: "Car" }],
+    },
+    2000,
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_id, "jiji:ad_status:99:1");
+  assert.equal(events[0].data.via, "my_adverts");
+});
+
+test("poller follows next-page signals for chat rooms and notifications", async () => {
+  const browser = browserMock({
+    chat_rooms: (p) =>
+      p.page === 2
+        ? ok({ status: "ok", results: [room(2, 20)] })
+        : ok({
+            status: "ok",
+            results: [room(1, 10)],
+            next_url: "/rooms?page=2",
+          }),
+    notifications: (p) =>
+      p.page === 2
+        ? ok({ notifications: [{ id: 2, type: "info" }] })
+        : ok({ notifications: [{ id: 1, type: "info" }], has_more: true }),
+    my_adverts: ok({ adverts: [] }),
+  });
+  const reads = await pollJiji(browser, () => {});
+  assert.deepEqual(
+    reads.rooms.map((r) => r.room_id),
+    [1, 2],
+  );
+  assert.deepEqual(
+    reads.notifications.map((n) => n.id),
+    [1, 2],
+  );
+  assert.deepEqual(
+    browser.calls.map((c) => [c.name, c.parameters.page]),
+    [
+      ["chat_rooms", undefined],
+      ["chat_rooms", 2],
+      ["notifications", undefined],
+      ["notifications", 2],
+      ["my_adverts", undefined],
+    ],
+  );
+});
+
+test("paged push reads stop at MAX_PUSH_PAGES", async () => {
+  let n = 0;
+  const browser = browserMock({
+    chat_rooms: () =>
+      ok({ status: "ok", results: [room(++n, n)], has_more: true }),
+    notifications: ok({ notifications: [] }),
+    my_adverts: ok({ adverts: [] }),
+  });
+  const reads = await pollJiji(browser, () => {});
+  assert.equal(reads.rooms.length, MAX_PUSH_PAGES);
+  assert.equal(
+    browser.calls.filter((c) => c.name === "chat_rooms").length,
+    MAX_PUSH_PAGES,
+  );
+});
+
+test("non-retryable HTTP failures are dropped once; retryable ones stay queued", async () => {
+  const item = (id) => ({
+    source: "jiji",
+    type: "chat_message",
+    event_id: id,
+    occurred_at: new Date(0).toISOString(),
+    summary: "x",
+    data: {},
+  });
+  const target = {
+    url: URL_OK,
+    host: new URL(URL_OK).host,
+    header: "Authorization",
+    value: SECRET,
+  };
+  const cases = [
+    [302, false],
+    [400, false],
+    [403, false],
+    [404, false],
+    [500, true],
+    [503, true],
+    [408, true],
+    [429, true],
+    ["network", true],
+    ["timeout", true],
+    ["dns", true],
+    ["dns_private", true],
+  ];
+  for (const [failure, retried] of cases) {
+    const dir = await tmp();
+    try {
+      const store = new PushStore(dir, { now: () => 1000 });
+      store.commit(fresh(), [item("e1")]);
+      let calls = 0;
+      const fetch = async () => {
+        calls++;
+        if (failure === "network") throw new TypeError("fetch failed");
+        if (failure === "timeout")
+          throw Object.assign(new Error("t"), { name: "TimeoutError" });
+        return new Response("{}", { status: failure });
+      };
+      const resolve =
+        failure === "dns"
+          ? async () => {
+              throw new Error("ENOTFOUND");
+            }
+          : failure === "dns_private"
+            ? async () => [{ address: "10.0.0.1", family: 4 }]
+            : publicDns;
+      const { log, lines } = recorder();
+      const outbox = new AlertOutbox(store, target, {
+        fetch,
+        resolve,
+        log,
+        now: () => 1000,
+      });
+      await outbox.kick();
+      await outbox.kick();
+      await outbox.close();
+      const label = String(failure);
+      if (retried) {
+        assert.equal(store.depth(), 1, label);
+        const queued = store.snapshot().outbox[0];
+        assert.equal(queued.attempts, 1, label);
+        assert.ok(queued.nextAttemptAt > 1000, label);
+        assert.ok(
+          lines.some((l) => l.includes("will retry")),
+          label,
+        );
+      } else {
+        assert.equal(store.depth(), 0, label);
+        assert.equal(calls, 1, label);
+        assert.ok(lines.some((l) => l.includes(`webhook_http_${failure}`)));
+        assert.ok(
+          lines.some((l) => l.includes("dropped")),
+          label,
+        );
+      }
+      const logged = lines.join("\n");
+      assert.ok(!logged.includes(SECRET), label);
+      assert.ok(!logged.includes("query-secret"), label);
+      assert.ok(!logged.includes("1234-uuid"), label);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("stop waits for an in-flight tick before closing the outbox", async (t) => {
+  let release;
+  let entered;
+  const reached = new Promise((r) => (entered = r));
+  const h = await harness(t, {
+    responses: {
+      chat_rooms: () => {
+        entered();
+        return new Promise((r) => (release = r));
+      },
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    },
+  });
+  const ticking = h.push.tick();
+  await reached;
+  let stopped = false;
+  const stopping = h.push.stop().then(() => (stopped = true));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(stopped, false, "stop returned while a read was hung");
+  assert.equal(h.push.outbox.closed, false, "outbox closed before the tick");
+  release(ok({ status: "ok", results: [room(1, 10)] }));
+  await stopping;
+  assert.equal(stopped, true);
+  assert.equal(h.push.outbox.closed, true);
+  assert.deepEqual(await ticking, { skipped: "stopped" });
+  assert.deepEqual(await h.push.tick(), { skipped: "stopped" });
 });

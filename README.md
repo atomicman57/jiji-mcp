@@ -132,15 +132,15 @@ Every release attempt is appended to `send-log.jsonl` in the companion applicati
 
 The companion can poll Jiji and POST new events to one HTTPS webhook, such as a Grok Bot routine. It is off by default and stays off until both `JIJI_PUSH_WEBHOOK_URL` and `JIJI_PUSH_WEBHOOK_AUTH_VALUE` are set. It never replies, never sends a message or offer, never marks a chat or notification read, and never calls a Jiji action or workflow. The alert POST is its only outbound request.
 
-Each poll reads three fixed account resources through the signed-in companion browser: `chat_rooms`, `notifications`, and `my_adverts` (up to five pages, following only an explicit next page). It does not open conversations or read `chat_messages`, because opening a chat may mark it read. Events:
+Each poll reads three fixed account resources through the signed-in companion browser: `chat_rooms`, `notifications`, and `my_adverts` (each up to five pages, following only an explicit next page). It does not open conversations or read `chat_messages`, because opening a chat may mark it read. Events:
 
 | Type | Source | When |
 | --- | --- | --- |
-| `chat_message` | `chat_rooms` | A room's last message changes, it is not marked as your own, and its unread count is not `0`. |
-| `offer` | `chat_rooms`, `notifications` | The same, when the last message carries a native offer (`offer`, `make_an_offer`, `offer_amount`, or an offer message type); or a new notification whose kind or text mentions an offer. |
+| `chat_message` | `chat_rooms` | A room's last message changes, it is not marked as your own, and its unread count is known and at least `1`. |
+| `offer` | `chat_rooms`, `notifications` | The same, when the last message carries a native offer (`offer: true`, a positive `offer`, `make_an_offer` or `offer_amount`, or an offer message type); or a new notification whose kind or text mentions an offer. `offer: false`, `0` or `""` is not an offer. |
 | `ad_status` | `my_adverts`, `notifications` | An advert's status changes (for example `on_review` → `active` or `declined`); or a new notification whose kind or text mentions approval, rejection, decline, block or moderation. |
 
-Jiji's web API is private and undocumented. Field names were inferred from the web client and mocked fixtures, and unknown fields are treated as unknown rather than guessed. A room whose last message has no own/unread signal alerts on any change, which can include a reply you sent from another device. An approval can arrive both as an `ad_status` change and as a notification, with different event ids.
+Jiji's web API is private and undocumented. Field names were inferred from the web client and mocked fixtures, and unknown fields are treated as unknown rather than guessed. A room with no unread count never alerts, so a reply you sent from another device is not reported as new; the cost is that a room whose payload lacks an unread count is silent. When one poll sees an advert's status change and an approval notification for the same advert, only the `my_adverts` alert is sent; if they land in different polls, both are sent with different event ids.
 
 The first successful read of each source records everything as already seen and sends nothing. Later changes alert. A signed-out browser, a Jiji error, or a disconnected companion skips that poll and keeps the saved state. Alert body:
 
@@ -155,7 +155,9 @@ The first successful read of each source records everything as already seen and 
 }
 ```
 
-Previews are capped at 280 characters. Delivery is at least once with `Idempotency-Key: <event_id>`; the receiver should dedupe on `event_id`. Any 2xx is accepted. Redirects are failures and are not followed.
+Previews are capped at 280 characters. Delivery is at least once with `Idempotency-Key: <event_id>`; the receiver should dedupe on `event_id`. Any 2xx is accepted. Network errors, timeouts, DNS failures, 5xx, 408 and 429 are retried. Any other status, including redirects (never followed) and 4xx such as 400, 401, 403 and 404, is logged with its code and event id and dropped without retry.
+
+The webhook host is DNS-checked, failing closed, at startup and again before every POST, but the address is not pinned: `fetch` resolves the name again, so there is a check-then-fetch (DNS rebinding) window in which a host that changes its answer between the check and the request could be reached at a non-public address. Point the webhook only at a host you trust.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
@@ -166,7 +168,7 @@ Previews are capped at 280 characters. Delivery is at least once with `Idempoten
 | `JIJI_PUSH_STATE_DIR` | `<app data>/push-notifications` | Absolute path for `push-state.json` (mode `0600`, directory `0700`). |
 | `JIJI_PUSH_WEBHOOK_OUTBOX_MAX` | `1000` | Most undelivered alerts kept, 1–100000. |
 
-`push-state.json` holds the per-source baseline, the last message marker per room, the last status per advert, delivered event ids (kept seven days), and the outbox. Undelivered alerts retry after `min(300, 2 ** min(attempts + 1, 9))` seconds and are dropped after seven days. When the outbox is full, a poll's new events are refused and that poll's state is not saved, so they are detected again once the outbox drains. An unreadable state file is set aside as `push-state.json.corrupt-<ms>`, and the feed baselines again without alerting. Log lines name the webhook host only, never its path, query or auth value. `status` reports `push_notifications` with `enabled`, the host, interval and outbox depth, or the reason it is off.
+`push-state.json` holds the per-source baseline, the last message marker per room, the last status per advert, delivered event ids (kept seven days), and the outbox. Retryable failures retry after `min(300, 2 ** min(attempts + 1, 9))` seconds and are dropped after seven days. When the outbox is full, a poll's new events are refused and that poll's state is not saved, so they are detected again once the outbox drains. An unreadable state file is set aside as `push-state.json.corrupt-<ms>`, and the feed baselines again without alerting. Log lines name the webhook host only, never its path, query or auth value. `status` reports `push_notifications` with `enabled`, the host, interval and outbox depth, or the reason it is off.
 
 Set the variables on the companion and restart it. The relay worker does not change. Enabling this on the Linux server is a deploy step that needs the owner's go-ahead; it is not done by this change.
 

@@ -129,8 +129,8 @@ export const accountResources = {
   notifications: read(
     "Notifications",
     `${api}/profile/notifications.json`,
-    empty,
-    () => ({}),
+    z.object({ page: integer.optional() }).strict(),
+    (a) => a,
     "notifications",
   ),
   notification_settings: read(
@@ -367,7 +367,12 @@ export const accountResources = {
   chat_rooms: read(
     "Jiji chat rooms",
     `${api}/chat/rooms.json`,
-    z.object({ sort: z.string().max(30).optional() }).strict(),
+    z
+      .object({
+        page: integer.optional(),
+        sort: z.string().max(30).optional(),
+      })
+      .strict(),
     (a) => a,
     "messages",
   ),

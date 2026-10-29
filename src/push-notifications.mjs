@@ -20,7 +20,8 @@ export const OUTBOX_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const SEEN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const ALERT_TIMEOUT_MS = 20000;
 export const PREVIEW_MAX = 280;
-export const MAX_ADVERT_PAGES = 5;
+// Page cap for every paged push read (chat rooms, notifications, adverts).
+export const MAX_PUSH_PAGES = 5;
 // Only these catalog reads are used. None of them marks a chat read: opening a
 // room (chat_messages or the conversation page) might, so it is never done.
 export const PUSH_READS = Object.freeze([
@@ -43,6 +44,20 @@ const FORBIDDEN_AUTH_HEADERS = new Set([
 
 export function backoffSeconds(attempts) {
   return Math.min(300, 2 ** Math.min(attempts + 1, 9));
+}
+
+const RETRYABLE_CODES = new Set([
+  "webhook_network_error",
+  "webhook_timeout",
+  "webhook_dns_error",
+  "webhook_dns_non_public",
+]);
+// Transport, DNS, 5xx, 408 and 429 can succeed later. Any other non-2xx (a
+// 3xx or a 4xx such as 400, 401, 403, 404) will not, so it is dropped.
+export function isRetryableFailure(code) {
+  if (RETRYABLE_CODES.has(code)) return true;
+  const status = Number(/^webhook_http_(\d{3})$/.exec(code ?? "")?.[1]);
+  return status >= 500 || status === 408 || status === 429;
 }
 
 // --- Logging -----------------------------------------------------------------
@@ -556,6 +571,13 @@ export class AlertOutbox {
         if (result.ok) {
           this.store.delivered(item.id);
           this.log("info", "push alert accepted", fields);
+        } else if (!isRetryableFailure(result.code)) {
+          this.store.delivered(item.id);
+          this.log("warn", "push alert rejected; dropped", {
+            ...fields,
+            code: result.code,
+            attempts: item.attempts + 1,
+          });
         } else {
           this.store.failed(item.id);
           this.log("warn", "push alert failed; will retry", {
@@ -639,11 +661,13 @@ const countOf = (v) => {
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 };
 function amountOf(v) {
+  if (typeof v === "string" && /^\d+(\.\d+)?$/.test(v.trim())) v = Number(v);
   if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
-  if (typeof v === "string" && /^\d+(\.\d+)?$/.test(v.trim())) return Number(v);
   if (isRecord(v)) return amountOf(first(v, ["amount", "price", "value"]));
   return null;
 }
+// An offer is `true`, a positive amount, or an offer-typed message. A present
+// but false, zero or empty field (offer: false, 0, "") is not an offer.
 function offerSignal(obj) {
   if (!isRecord(obj)) return null;
   const raw = first(obj, [
@@ -653,10 +677,12 @@ function offerSignal(obj) {
     "offer_price",
     "price_offer",
   ]);
+  const amount = amountOf(raw);
+  if (amount !== null) return { amount };
   const kind = first(obj, ["type", "message_type", "kind"]);
-  if (raw === undefined && !(typeof kind === "string" && /offer/i.test(kind)))
-    return null;
-  return { amount: amountOf(raw) };
+  if (raw === true || (typeof kind === "string" && /offer/i.test(kind)))
+    return { amount: null };
+  return null;
 }
 
 export function roomRows(body) {
@@ -825,10 +851,13 @@ export function detectEvents(state, reads, now) {
       if (!room) continue;
       const prev = state.rooms[room.roomId];
       next.rooms[room.roomId] = { marker: room.marker, at: now };
+      // Unknown unread (no count field) never alerts: without it a reply
+      // sent from another device would look like a new incoming message.
       if (
         !alert ||
         prev?.marker === room.marker ||
         room.outgoing ||
+        room.unread === null ||
         room.unread === 0
       )
         continue;
@@ -925,10 +954,28 @@ export function detectEvents(state, reads, now) {
     }
     next.baselined.adverts = true;
   }
+  // One approval can show up as both an advert status change and a
+  // notification in the same poll. Keep the my_adverts transition only.
+  const adverts = new Set(
+    events
+      .filter((e) => e.data.via === "my_adverts")
+      .map((e) => e.data.advert_id),
+  );
   next.rooms = forget(next.rooms, now);
   next.notifications = forget(next.notifications, now);
   next.adverts = forget(next.adverts, now);
-  return { next, events };
+  return {
+    next,
+    events: events.filter(
+      (e) =>
+        !(
+          e.type === "ad_status" &&
+          e.data.via === "notifications" &&
+          e.data.advert_id &&
+          adverts.has(e.data.advert_id)
+        ),
+    ),
+  };
 }
 
 // --- Polling -------------------------------------------------------------------
@@ -959,35 +1006,42 @@ export async function pollJiji(browser, log = consoleLog) {
       return null;
     }
   };
-  const rooms = await guard("chat_rooms", async () => {
-    const body = await get("chat_rooms");
-    return body && roomRows(body);
-  });
-  const notifications = await guard("notifications", async () => {
-    const body = await get("notifications");
-    return body && notificationRows(body);
-  });
-  const adverts = await guard("my_adverts", async () => {
-    const all = [];
-    const ids = new Set();
-    for (let page = 1; page <= MAX_ADVERT_PAGES; page++) {
-      const body = await get("my_adverts", page === 1 ? {} : { page });
-      const rows = body && advertRows(body);
-      if (!rows) return page === 1 ? null : all;
-      const fresh = rows.filter((r) => {
-        const id = readAdvert(r)?.id;
-        if (!id || ids.has(id)) return false;
-        ids.add(id);
-        return true;
-      });
-      all.push(...fresh);
-      // Follow only an explicit next-page signal; a repeated page stops it.
-      const more =
-        body.next_url || body.adverts_list?.next_url || body.has_more === true;
-      if (!fresh.length || !more) break;
-    }
-    return all;
-  });
+  // Up to MAX_PUSH_PAGES pages. Follows only an explicit next-page signal; a
+  // page with no new ids stops it. A failed later page keeps earlier pages.
+  const paged = (name, rowsOf, idOfRow) =>
+    guard(name, async () => {
+      const all = [];
+      const ids = new Set();
+      for (let page = 1; page <= MAX_PUSH_PAGES; page++) {
+        const body = await get(name, page === 1 ? {} : { page });
+        const rows = body && rowsOf(body);
+        if (!rows) return page === 1 ? null : all;
+        const fresh = rows.filter((r) => {
+          const id = idOfRow(r);
+          if (!id || ids.has(id)) return false;
+          ids.add(id);
+          return true;
+        });
+        all.push(...fresh);
+        const more =
+          body.next_url ||
+          body.adverts_list?.next_url ||
+          body.has_more === true;
+        if (!fresh.length || !more) break;
+      }
+      return all;
+    });
+  const rooms = await paged("chat_rooms", roomRows, (r) => readRoom(r)?.roomId);
+  const notifications = await paged(
+    "notifications",
+    notificationRows,
+    (r) => readNotification(r)?.id,
+  );
+  const adverts = await paged(
+    "my_adverts",
+    advertRows,
+    (r) => readAdvert(r)?.id,
+  );
   return { rooms, notifications, adverts };
 }
 
@@ -1046,8 +1100,16 @@ export async function startPushNotifications({
   });
   let timer;
   let closed = false;
-  let running;
-  async function tick() {
+  // stop() waits for these so a tick never persists after the outbox closes.
+  const running = new Set();
+  function tick() {
+    const run = poll();
+    running.add(run);
+    const clear = () => running.delete(run);
+    run.then(clear, clear);
+    return run;
+  }
+  async function poll() {
     if (closed) return { skipped: "stopped" };
     if (!isEnabled()) {
       log("info", "push poll skipped; companion is disconnected");
@@ -1083,11 +1145,9 @@ export async function startPushNotifications({
     if (closed) return;
     timer = setTimeout(async () => {
       timer = undefined;
-      running = tick().catch((e) =>
+      await tick().catch((e) =>
         log("error", "push poll failed", { error: e?.message }),
       );
-      await running;
-      running = undefined;
       schedule(config.pollMs);
     }, delay);
     timer.unref?.();
@@ -1114,6 +1174,7 @@ export async function startPushNotifications({
       closed = true;
       clearTimeout(timer);
       timer = undefined;
+      await Promise.allSettled(running);
       await outbox.close();
     },
   };
