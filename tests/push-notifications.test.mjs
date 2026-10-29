@@ -26,6 +26,7 @@ import {
   pollJiji,
   readPushConfig,
   resolvesPublic,
+  safeErrorFields,
   sendAlert,
   startPushNotifications,
 } from "../src/push-notifications.mjs";
@@ -1037,4 +1038,140 @@ test("stop waits for an in-flight tick before closing the outbox", async (t) => 
   assert.equal(h.push.outbox.closed, true);
   assert.deepEqual(await ticking, { skipped: "stopped" });
   assert.deepEqual(await h.push.tick(), { skipped: "stopped" });
+});
+
+// --- Error redaction ---------------------------------------------------------
+
+const LEAKS = [
+  "cookie=",
+  "token=",
+  "bearer ",
+  "message=",
+  "is it still available",
+  "sess-abc123",
+];
+const leaky = () =>
+  Object.assign(
+    new Error(
+      "cookie=sess-abc123 token=tok-xyz Bearer sk-live message=Is it still available?",
+    ),
+    { code: "ECONNRESET" },
+  );
+const assertNoLeak = (lines, label) => {
+  const logged = lines.join("\n").toLowerCase();
+  for (const leak of LEAKS)
+    assert.ok(!logged.includes(leak), `${label} logged ${leak}`);
+};
+
+test("safeErrorFields keeps only an identifier-like name and code", () => {
+  assert.deepEqual(safeErrorFields(leaky()), {
+    error_name: "Error",
+    error_code: "ECONNRESET",
+  });
+  assert.deepEqual(
+    safeErrorFields({ name: "token=abc", code: "Bearer x", message: "m" }),
+    {},
+  );
+  assert.deepEqual(safeErrorFields({ name: "TypeError", code: 503 }), {
+    error_name: "TypeError",
+    error_code: 503,
+  });
+  assert.deepEqual(safeErrorFields(undefined), {});
+  assert.deepEqual(safeErrorFields("cookie=x"), {});
+});
+
+test("a thrown poll read logs no part of the error message", async () => {
+  const browser = browserMock({
+    chat_rooms: async () => {
+      throw leaky();
+    },
+    notifications: ok({ notifications: [] }),
+    my_adverts: ok({ adverts: [] }),
+  });
+  const { log, lines } = recorder();
+  const reads = await pollJiji(browser, log);
+  assert.equal(reads.rooms, null);
+  assert.ok(lines.some((l) => l.includes("push poll read failed")));
+  assert.ok(lines.some((l) => l.includes('"error_code":"ECONNRESET"')));
+  assertNoLeak(lines, "poll guard");
+});
+
+test("a browser error during a tick logs no part of the error message", async (t) => {
+  const h = await harness(t, {
+    responses: {
+      chat_rooms: ok({ status: "ok", results: [] }),
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    },
+    status: async () => {
+      throw leaky();
+    },
+  });
+  assert.deepEqual(await h.push.tick(), { skipped: "browser_error" });
+  assert.ok(h.lines.some((l) => l.includes("browser error")));
+  assertNoLeak(h.lines, "browser.run");
+});
+
+test("a failed scheduled tick logs no part of the error message", async (t) => {
+  const dir = await tmp();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const { log, lines } = recorder();
+  const push = await startPushNotifications({
+    env: env(),
+    runtimeDir: dir,
+    browser: browserMock({
+      chat_rooms: ok({ status: "ok", results: [] }),
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    }),
+    log,
+    fetch: fetchMock(),
+    resolve: publicDns,
+    firstPollMs: 0,
+  });
+  t.after(() => push.stop());
+  push.store.commit = () => {
+    throw leaky();
+  };
+  for (let i = 0; i < 50 && !lines.some((l) => l.includes("poll failed")); i++)
+    await new Promise((r) => setTimeout(r, 5));
+  assert.ok(lines.some((l) => l.includes("push poll failed")));
+  assertNoLeak(lines, "schedule");
+});
+
+test("a local outbox failure logs no part of the error message", async () => {
+  const { log, lines } = recorder();
+  const store = {
+    due: () => {
+      throw leaky();
+    },
+    nextDueAt: () => undefined,
+  };
+  const outbox = new AlertOutbox(store, {}, { log });
+  await outbox.kick();
+  await outbox.close();
+  assert.ok(lines.some((l) => l.includes("push alert outbox failed")));
+  assertNoLeak(lines, "outbox");
+});
+
+test("an unusable state directory is reported without the error message", async () => {
+  const dir = await tmp();
+  try {
+    const file = path.join(dir, "not-a-dir");
+    await writeFile(file, "x");
+    const { log, lines } = recorder();
+    const push = await startPushNotifications({
+      env: env({ JIJI_PUSH_STATE_DIR: path.join(file, "nested") }),
+      log,
+      resolve: publicDns,
+    });
+    assert.equal(push.enabled, false);
+    assert.match(
+      push.reason,
+      /^Push state directory is unusable \(E[A-Z]+\)\.$/,
+    );
+    assert.ok(!lines.join("\n").includes(file));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

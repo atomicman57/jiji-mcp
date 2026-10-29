@@ -70,6 +70,29 @@ export function consoleLog(level, message, fields = {}) {
   );
 }
 
+// An error's message can quote a cookie, a token or a chat preview, so only
+// its name and a short code are ever logged, and only when they look like
+// identifiers. Never the message, the stack or the error itself.
+export function safeErrorFields(err) {
+  const fields = {};
+  const name = err?.name;
+  if (typeof name === "string" && /^[A-Za-z][A-Za-z0-9_]{0,59}$/.test(name))
+    fields.error_name = name;
+  const code = err?.code;
+  if (
+    (typeof code === "string" && /^[A-Za-z0-9_.-]{1,60}$/.test(code)) ||
+    (typeof code === "number" && Number.isSafeInteger(code))
+  )
+    fields.error_code = code;
+  return fields;
+}
+
+const reasonCode = (err) => {
+  const { error_code, error_name } = safeErrorFields(err);
+  const code = error_code ?? error_name;
+  return code === undefined ? "" : ` (${code})`;
+};
+
 // --- Config ------------------------------------------------------------------
 
 function read(env, name) {
@@ -589,7 +612,7 @@ export class AlertOutbox {
       }
     } catch (e) {
       // Local state failed (disk full, permissions). Retry later, never spin.
-      this.log("error", "push alert outbox failed", { error: e?.message });
+      this.log("error", "push alert outbox failed", safeErrorFields(e));
       this.arm(DRAIN_ERROR_RETRY_MS);
     }
   }
@@ -1001,7 +1024,7 @@ export async function pollJiji(browser, log = consoleLog) {
     } catch (e) {
       log("warn", "push poll read failed", {
         resource: name,
-        error: e?.message,
+        ...safeErrorFields(e),
       });
       return null;
     }
@@ -1071,7 +1094,7 @@ export async function startPushNotifications({
   try {
     config = readPushConfig(env, { runtimeDir, log });
   } catch (e) {
-    return off("Push config could not be read: " + e?.message);
+    return off(`Push config could not be read${reasonCode(e)}.`);
   }
   if (!config.enabled) return off(config.reason);
   const { target } = config;
@@ -1090,7 +1113,7 @@ export async function startPushNotifications({
       outboxMax: config.outboxMax,
     });
   } catch (e) {
-    return off("Push state directory is unusable: " + e?.message);
+    return off(`Push state directory is unusable${reasonCode(e)}.`);
   }
   const outbox = new AlertOutbox(store, target, {
     fetch: fetchImpl,
@@ -1123,7 +1146,7 @@ export async function startPushNotifications({
         return pollJiji(browser, log);
       });
     } catch (e) {
-      log("warn", "push poll skipped; browser error", { error: e?.message });
+      log("warn", "push poll skipped; browser error", safeErrorFields(e));
       return { skipped: "browser_error" };
     }
     if (!reads) {
@@ -1146,7 +1169,7 @@ export async function startPushNotifications({
     timer = setTimeout(async () => {
       timer = undefined;
       await tick().catch((e) =>
-        log("error", "push poll failed", { error: e?.message }),
+        log("error", "push poll failed", safeErrorFields(e)),
       );
       schedule(config.pollMs);
     }, delay);
