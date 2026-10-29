@@ -13,6 +13,7 @@ import { confirmAdvert, prepareAdvertPlan } from "../src/advert-confirm.mjs";
 import {
   CATEGORY_HINTS,
   assertFreeOnly,
+  isPromoField,
   resolveCategoryPath,
 } from "../src/advert-form.mjs";
 import {
@@ -162,6 +163,25 @@ test("pre-selected 14-day promo trial is switched to No promo (free)", async () 
   assert.throws(
     () => assertFreeOnly({ premium_package: "top_7" }, [promoField]),
     /paid promotion/,
+  );
+});
+
+test("promo detection ignores ordinary attributes and catches paid-looking options", () => {
+  const f = (name, label, values) => ({ name, label, options: values });
+  assert.equal(isPromoField(f("attr_7", "Package Type")), false);
+  assert.equal(isPromoField(f("attr_8", "Top Load")), false);
+  assert.equal(isPromoField(f("attr_9", "Laptop Brand")), false);
+  assert.equal(isPromoField(f("price_negotiable", "Negotiable")), false);
+  assert.equal(isPromoField(f("package_id", "")), true);
+  assert.equal(isPromoField(f("attr_10", "Promote your ad")), true);
+  assert.equal(
+    isPromoField(
+      f("attr_11", "Visibility", [
+        { value: 0, label: "No promo" },
+        { value: 1, label: "TOP 7 days" },
+      ]),
+    ),
+    true,
   );
 });
 

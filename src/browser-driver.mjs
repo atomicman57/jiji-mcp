@@ -984,7 +984,7 @@ export class JijiBrowser {
         name: photo.name || "photo." + type.split("/")[1],
       },
     );
-    if (r.error || r.status !== 200 || !r.id)
+    if (r.error || !(r.status >= 200 && r.status < 300) || !r.id)
       throw new Error(
         r.error || `Jiji photo upload returned HTTP ${r.status ?? "?"}.`,
       );

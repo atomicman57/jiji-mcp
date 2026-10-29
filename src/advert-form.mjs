@@ -10,7 +10,14 @@ export const CATEGORY_HINTS = {
   solar_panels: ["Repair & Construction", "Electrical Equipment"],
 };
 
-const PROMO = /promo|premium|package|boost|(^|[^a-z])top([^a-z]|$)|trial|vip/i;
+// Promotion controls are recognised by name, label or paid-looking options.
+// Kept narrow so category attributes such as "Package Type" or "Top Load"
+// are not mistaken for the promo step.
+const PROMO_NAME =
+  /promo|premium|boost|trial|vip|(^|_)top(_|$)|(^|_)packages?(_id)?$|paid_?package/i;
+const PROMO_LABEL = /promo|premium|boost|free trial|top ads?\b|vip/i;
+const PROMO_OPTION =
+  /\b(top|boost|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b|\bfree trial\b/i;
 const FREE_OPTION = /no\s*promo|^free$|^none$|without|^no$|^standard$|^basic$/i;
 const PAID_OPTION = /trial|day|week|month|top|boost|vip|premium|diamond|gold/i;
 const PHOTO_FIELD = /^(images|image_ids|photos|photo_ids)$/;
@@ -46,7 +53,11 @@ export function flattenFields(...groups) {
 
 const describe = (f) => `${f.name} ${f.label}`;
 export const isPromoField = (f) =>
-  PROMO.test(describe(f)) && !/price|negotiab/i.test(describe(f));
+  !/price|negotiab/i.test(describe(f)) &&
+  (PROMO_NAME.test(f.name) ||
+    PROMO_LABEL.test(f.label || "") ||
+    (Array.isArray(f.options) &&
+      f.options.some((o) => PROMO_OPTION.test(optionLabel(o)))));
 
 // The free choice for a promo control: the "No promo"/free option when the
 // control has options, otherwise false/empty. Throws if no free choice exists.
