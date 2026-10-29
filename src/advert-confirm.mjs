@@ -23,10 +23,17 @@ export function prepareAdvertPlan(plans, prepared) {
 
 function findPlan(plans, token, id) {
   const want = digest(token);
-  const matches = (p) =>
-    p.type === "jiji_advert" &&
-    typeof p.token_hash === "string" &&
-    timingSafeEqual(Buffer.from(p.token_hash, "hex"), want);
+  // A stored hash of the wrong length makes timingSafeEqual throw; treat it
+  // as no match so the caller sees the usual unknown-token error.
+  const matches = (p) => {
+    if (p.type !== "jiji_advert" || typeof p.token_hash !== "string")
+      return false;
+    try {
+      return timingSafeEqual(Buffer.from(p.token_hash, "hex"), want);
+    } catch {
+      return false;
+    }
+  };
   if (id !== undefined) {
     const p = plans.plans.get(id);
     if (!p || !matches(p))

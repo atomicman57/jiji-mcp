@@ -8,6 +8,7 @@ import {
   buildAction,
   validateUserData,
 } from "./catalog.mjs";
+import { MAX_PRICE } from "./advert-form.mjs";
 export function registerPlatformTools(register, request) {
   const record = z.record(z.string(), z.unknown());
   const write = {
@@ -102,7 +103,7 @@ export function registerPlatformTools(register, request) {
   ]);
   register(
     "jiji_prepare_advert",
-    'Preview a new or edited advert against Jiji\'s current create/edit and category forms. Sends nothing. Supports category_id or category_path (e.g. solar panels: ["Repair & Construction", "Electrical Equipment"]), category attributes in fields, brand (unknown brands use Other + Specify Brand), price, negotiable, and an ordered photos list from absolute local paths, https URLs or existing photo ids (order = final order; on edit, existing photos left out are deleted). Promotion is always No promo (free): any pre-selected promo or 14-day free trial is switched off and paid promo fields are rejected. Returns a preview, payload_hash and a single-use approval_token valid for 10 minutes. Show the preview to the owner and call jiji_confirm_advert only after they approve it.',
+    'Preview a new or edited advert against Jiji\'s current create/edit and category forms. Sends nothing. Supports category_id or category_path (e.g. solar panels: ["Repair & Construction", "Electrical Equipment"]), category attributes in fields, brand (unknown brands use Other + Specify Brand), price, negotiable, and an ordered photos list from absolute local paths, https URLs or existing photo ids (order = final order; on edit, existing photos left out are deleted; omit photos to keep them unchanged; photos: [] needs remove_all_photos: true). Promotion is always No promo (free): any pre-selected promo or 14-day free trial is switched off and paid promo fields are rejected. Returns a preview, payload_hash and a single-use approval_token valid for 10 minutes. Show the preview to the owner and call jiji_confirm_advert only after they approve it.',
     {
       advert_id: z.number().int().positive().optional(),
       category_id: z.number().int().positive().optional(),
@@ -114,13 +115,17 @@ export function registerPlatformTools(register, request) {
       region_id: z.number().int().positive(),
       fields: record,
       brand: z.string().min(1).max(120).optional(),
-      price: z.number().nonnegative().max(1e12).optional(),
+      price: z.number().nonnegative().max(MAX_PRICE).optional(),
       negotiable: z.boolean().optional(),
       photos: z.array(photo).max(20).optional(),
+      remove_all_photos: z.boolean().optional(),
       promo: z.literal("free").default("free"),
     },
     ({ promo, ...args }) => {
-      if (!args.category_id === !args.category_path)
+      const categoryArgs = [args.category_id, args.category_path].filter(
+        (v) => v !== undefined,
+      ).length;
+      if (categoryArgs !== 1)
         throw new Error("Provide exactly one of category_id or category_path.");
       validateUserData(args.fields);
       return request({ action: "prepare_advert", parameters: args });

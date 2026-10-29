@@ -1024,7 +1024,8 @@ export class JijiBrowser {
       );
     const body = { ...current.request.body };
     assertFreeOnly(body, current.form_fields);
-    if (current.photo_field) {
+    // Without a photo list (edit), the body already resends the current ids.
+    if (current.photo_field && current.parameters.photos) {
       const photos = current.parameters.photos;
       const ids = [];
       try {

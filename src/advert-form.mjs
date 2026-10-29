@@ -30,6 +30,11 @@ const optionCost = (o) =>
     ? Number(o.price ?? o.amount ?? o.cost ?? o.price_value ?? 0) || 0
     : 0;
 const PHOTO_FIELD = /^(images|image_ids|photos|photo_ids)$/;
+// Values/option labels that look like a paid or trial promotion. Used to fail
+// closed on pre-filled controls that isPromoField did not recognise.
+const PAID_LOOKING =
+  /\b(free\s*)?trial\b|\bpromo(ted|tion)?\b|\bboost(ed)?\b|\bpaid[\s_-]*(promo|package|ad|listing)|\b(top|vip|premium|diamond)[\s_-]*\d+|\b(top|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b/i;
+export const MAX_PRICE = 1e12;
 
 const text = (v) => (v === undefined || v === null ? "" : String(v)).trim();
 const optionValue = (o) =>
@@ -102,9 +107,14 @@ export function resolveCategoryPath(tree, path) {
   let found;
   for (const name of path) {
     const want = text(name).toLowerCase();
-    found = (Array.isArray(level) ? level : []).find(
+    const matches = (Array.isArray(level) ? level : []).filter(
       (c) => text(c?.name ?? c?.title ?? c?.label).toLowerCase() === want,
     );
+    if (matches.length > 1)
+      throw new Error(
+        `Category "${name}" matches ${matches.length} categories in Jiji's current list. Read advert_create_form and pass category_id.`,
+      );
+    found = matches[0];
     if (!found)
       throw new Error(
         `Category "${name}" was not found in Jiji's current category list. Read advert_create_form and pass category_id.`,
@@ -255,12 +265,16 @@ export function buildAdvertSubmission({
     for (const [k, v] of Object.entries(resolved.values)) set(k, v, "brand");
     brand = resolved.preview;
   }
+  const priceField =
+    byName.get("price") || fields.find((f) => /^price$/i.test(f.label));
   if (parameters.price !== undefined) {
-    const price =
-      byName.get("price") || fields.find((f) => /^price$/i.test(f.label));
-    if (!price) throw new Error("This advert form has no price field.");
-    set(price.name, parameters.price, "price");
+    if (!priceField) throw new Error("This advert form has no price field.");
+    set(priceField.name, parameters.price, "price");
   }
+  // The final price is checked here, whichever way it was supplied (the
+  // top-level price argument or fields.price), so fields cannot bypass it.
+  for (const key of new Set(["price", priceField?.name]))
+    if (key && key in body) assertPrice(body[key]);
   if (parameters.negotiable !== undefined) {
     const field = fields.find((f) => /negotiab/i.test(describe(f)));
     if (!field) throw new Error("This advert form has no negotiable field.");
@@ -274,6 +288,7 @@ export function buildAdvertSubmission({
   // Always No promo (free). A pre-selected promo — including Jiji's 14-day
   // free trial offered after the free-ad limit — is switched off here.
   const promo = { selected: "free", cleared: [] };
+  const promoForced = new Set();
   for (const f of fields.filter(isPromoField)) {
     const free = freePromoValue(f);
     if (
@@ -285,17 +300,37 @@ export function buildAdvertSubmission({
     )
       promo.cleared.push({ field: f.name, was: f.value });
     body[f.name] = free;
+    promoForced.add(f.name);
   }
 
-  let photoField;
-  const photoPreview = [];
-  if (photos) {
-    photoField = fields.find((f) => PHOTO_FIELD.test(f.name));
+  assertNoPaidPrefill(body, fields, promoForced);
+
+  let photoField = fields.find((f) => PHOTO_FIELD.test(f.name));
+  let photoPreview = [];
+  let photoNotice;
+  if (parameters.remove_all_photos && !(photos && photos.length === 0))
+    throw new Error("remove_all_photos is only valid with photos: [].");
+  if (!photos && editing && photoField) {
+    // Photos not passed on edit: resend the current photos unchanged.
+    const ids = existingPhotoIds(photoField);
+    body[photoField.name] = ids;
+    photoPreview = { unchanged: true, ids };
+  } else if (!photos) {
+    photoField = undefined;
+    photoPreview = "unchanged";
+  } else {
     if (!photoField)
       throw new Error(
         "Jiji's advert form did not expose a photo field. Manage photos with jiji_open_workflow post_ad.",
       );
     const existing = new Set(existingPhotoIds(photoField));
+    if (editing && !photos.length && existing.size) {
+      if (!parameters.remove_all_photos)
+        throw new Error(
+          "photos: [] would remove every photo from this advert. Omit photos to keep them, or set remove_all_photos: true to remove them all.",
+        );
+      photoNotice = `All ${existing.size} existing photo(s) will be removed from this advert.`;
+    }
     const seen = new Set();
     body[photoField.name] = photos.map((p, i) => {
       if (p.existing_id !== undefined) {
@@ -352,7 +387,8 @@ export function buildAdvertSubmission({
     price: parameters.price ?? user.price,
     negotiable: parameters.negotiable,
     ...(brand ? { brand } : {}),
-    photos: photos ? photoPreview : "unchanged",
+    photos: photoPreview,
+    ...(photoNotice ? { photo_notice: photoNotice } : {}),
     promo,
     request: { method: request.method, path: request.path },
   };
@@ -370,14 +406,78 @@ export function buildAdvertSubmission({
   };
 }
 
-// Final guard before any write: every promo control must hold its free value.
+// Final guard before any write: every promo control must hold its free value
+// and no unrecognised control may carry a paid/trial-looking selection.
 export function assertFreeOnly(body, fields) {
-  for (const f of flattenFields(fields).filter(isPromoField))
-    if (String(body[f.name]) !== String(freePromoValue(f)))
-      throw Object.assign(
-        new Error(
-          "Refusing to submit: a paid promotion would be selected. Nothing was sent.",
-        ),
-        { nothingSent: true },
+  const flat = flattenFields(fields);
+  const refuse = () =>
+    Object.assign(
+      new Error(
+        "Refusing to submit: a paid promotion would be selected. Nothing was sent.",
+      ),
+      { nothingSent: true },
+    );
+  const promo = flat.filter(isPromoField);
+  for (const f of promo)
+    if (String(body[f.name]) !== String(freePromoValue(f))) throw refuse();
+  if (paidLookingField(body, flat, new Set(promo.map((f) => f.name))))
+    throw refuse();
+}
+
+function assertPrice(value) {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > MAX_PRICE)
+    throw new Error(
+      `Price must be a number from 0 to ${MAX_PRICE}. Nothing was prepared.`,
+    );
+}
+
+// Returns the first form field (other than the forced promo fields) whose
+// effective value looks like a paid/trial selection or costs money.
+function paidLookingField(body, fields, forced) {
+  for (const f of fields) {
+    if (forced.has(f.name) || PHOTO_FIELD.test(f.name)) continue;
+    if (["title", "description"].includes(f.name)) continue;
+    const value = f.name in body ? body[f.name] : f.value;
+    if (
+      value === undefined ||
+      value === null ||
+      value === "" ||
+      value === false
+    )
+      continue;
+    if (Array.isArray(f.options) && f.options.length) {
+      const picked = f.options.find(
+        (o) => String(optionValue(o)) === String(value),
       );
+      if (!picked) continue;
+      const label = optionLabel(picked);
+      if (optionCost(picked) > 0) return f;
+      if (FREE_OPTION.test(label)) continue;
+      if (PAID_LOOKING.test(label) || PAID_LOOKING.test(String(value)))
+        return f;
+      continue;
+    }
+    if (typeof value === "object") continue;
+    // Short token values such as "trial_14" or "top_7"; free text is skipped.
+    const token = String(value);
+    if (token.length <= 40 && PAID_LOOKING.test(token.replace(/_/g, " ")))
+      return f;
+  }
+  return null;
+}
+
+// Fails prepare when a control isPromoField did not recognise still holds a
+// paid/trial-looking value, instead of leaving it selected on Jiji's side.
+function assertNoPaidPrefill(body, fields, forced) {
+  const f = paidLookingField(body, fields, forced);
+  if (f)
+    throw new Error(
+      `Jiji's form has "${f.label || f.name}" set to what looks like a paid promotion or trial, and it could not be switched to free. Nothing was prepared; finish this advert on Jiji.`,
+    );
 }

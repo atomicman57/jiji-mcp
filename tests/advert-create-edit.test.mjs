@@ -710,6 +710,19 @@ test("MCP prepare/confirm advert tools route preview and token without auto-appr
       arguments: solarCreate({ category_id: 1083 }),
     });
     assert.equal(both.isError, true);
+    const { category_path, ...noCategory } = solarCreate();
+    const neither = await client.callTool({
+      name: "jiji_prepare_advert",
+      arguments: noCategory,
+    });
+    assert.equal(neither.isError, true);
+    assert.match(neither.content[0].text, /exactly one of category_id/);
+    const wipe = await client.callTool({
+      name: "jiji_prepare_advert",
+      arguments: { ...solarCreate(), photos: [], remove_all_photos: true },
+    });
+    assert.ok(!wipe.isError, wipe.content[0].text);
+    assert.equal(seen.at(-1).parameters.remove_all_photos, true);
     const done = await client.callTool({
       name: "jiji_confirm_advert",
       arguments: {
@@ -724,4 +737,172 @@ test("MCP prepare/confirm advert tools route preview and token without auto-appr
     await client.close();
     await server.close();
   }
+});
+
+const editBrowser = () =>
+  mockAdvertBrowser(JijiBrowser, {
+    editing: true,
+    images: [
+      { id: 901, url: "https://pictures.example/901.jpg" },
+      { id: 902, url: "https://pictures.example/902.jpg" },
+    ],
+  });
+const solarEdit = (extra = {}) => ({
+  advert_id: 77,
+  category_id: 1083,
+  region_id: 4,
+  fields: { title: "Edited panel", description: "Updated mock" },
+  ...extra,
+});
+
+test("final price is validated whether it comes from price or fields.price", async () => {
+  const { browser, state } = mockAdvertBrowser(JijiBrowser);
+  const { price, ...base } = solarCreate();
+  for (const bad of [-1, NaN, 1e12 + 1, Infinity, "abc", ""])
+    await assert.rejects(
+      browser.prepareAdvert({
+        ...base,
+        fields: { ...base.fields, price: bad },
+      }),
+      /Price must be a number from 0 to/,
+      String(bad),
+    );
+  const ok = await browser.prepareAdvert({
+    ...base,
+    fields: { ...base.fields, price: "95000" },
+  });
+  assert.equal(ok.request.body.price, "95000");
+  assert.equal(state.writes.length, 0);
+});
+
+test("edit without photos keeps the existing photos and marks them unchanged", async () => {
+  const { browser, state } = editBrowser();
+  const prepared = await browser.prepareAdvert(solarEdit());
+  assert.deepEqual(prepared.request.body.images, ["901", "902"]);
+  assert.deepEqual(prepared.preview.photos, {
+    unchanged: true,
+    ids: ["901", "902"],
+  });
+  assert.ok(!("images" in prepared.preview.attributes));
+  const plans = new ApprovalPlans();
+  const plan = prepareAdvertPlan(plans, prepared);
+  const done = await confirmAdvert(
+    plans,
+    (p) => browser.executeAdvert(p.parameters, p.payload_hash),
+    { approval_token: plan.approval_token, payload_hash: plan.payload_hash },
+  );
+  assert.equal(done.state, "submitted");
+  assert.equal(state.uploads.length, 0);
+  assert.deepEqual(state.writes[0].body.images, ["901", "902"]);
+});
+
+test("photos: [] on edit needs remove_all_photos and the preview calls out the wipe", async () => {
+  const { browser } = editBrowser();
+  await assert.rejects(
+    browser.prepareAdvert(solarEdit({ photos: [] })),
+    /would remove every photo.*remove_all_photos: true/,
+  );
+  await assert.rejects(
+    browser.prepareAdvert(
+      solarEdit({ photos: [{ existing_id: 901 }], remove_all_photos: true }),
+    ),
+    /only valid with photos: \[\]/,
+  );
+  const wiped = await browser.prepareAdvert(
+    solarEdit({ photos: [], remove_all_photos: true }),
+  );
+  assert.deepEqual(wiped.request.body.images, []);
+  assert.match(
+    wiped.preview.photo_notice,
+    /All 2 existing photo\(s\) will be removed/,
+  );
+  assert.deepEqual(
+    wiped.preview.photos.map((p) => [p.id, p.deleted]),
+    [
+      ["901", true],
+      ["902", true],
+    ],
+  );
+});
+
+test("an unrecognised pre-filled trial or paid control fails prepare closed", async () => {
+  const hidden = {
+    name: "attr_listing_mode",
+    label: "Listing",
+    value: "trial_14",
+  };
+  assert.equal(isPromoField({ ...hidden, options: null }), false);
+  const { browser, state } = mockAdvertBrowser(JijiBrowser);
+  state.base.fields.push(hidden);
+  await assert.rejects(
+    browser.prepareAdvert(solarCreate()),
+    /"Listing" set to what looks like a paid promotion or trial/,
+  );
+  // A selected option that costs money fails closed even with a bland label.
+  state.base.fields[state.base.fields.length - 1] = {
+    name: "attr_plan",
+    label: "Plan",
+    value: 2,
+    values: [
+      { value: 1, label: "Standard" },
+      { value: 2, label: "Standard+", price: 1500 },
+    ],
+  };
+  await assert.rejects(
+    browser.prepareAdvert(solarCreate()),
+    /looks like a paid promotion/,
+  );
+  // The free choice of the same control is accepted.
+  state.base.fields.at(-1).value = 1;
+  await browser.prepareAdvert(solarCreate());
+  // The final pre-write guard applies the same rule.
+  assert.throws(
+    () => assertFreeOnly({ premium_package: "" }, [promoField, hidden]),
+    /paid promotion/,
+  );
+  assert.equal(state.writes.length, 0);
+});
+
+test("duplicate category names at one level require category_id", () => {
+  const tree = [
+    {
+      id: 47,
+      name: "Repair & Construction",
+      children: [
+        { id: 1083, name: "Electrical Equipment" },
+        { id: 1090, name: "electrical equipment" },
+      ],
+    },
+  ];
+  assert.throws(
+    () => resolveCategoryPath(tree, CATEGORY_HINTS.solar_panels),
+    /matches 2 categories.*pass category_id/,
+  );
+});
+
+test("a stored token hash of the wrong length is an unknown token, not a crash", async () => {
+  const { browser } = mockAdvertBrowser(JijiBrowser);
+  const plans = new ApprovalPlans();
+  const plan = prepareAdvertPlan(
+    plans,
+    await browser.prepareAdvert(solarCreate()),
+  );
+  plans.get(plan.id).token_hash = "abcd";
+  const send = () => assert.fail("must not send");
+  await assert.rejects(
+    confirmAdvert(plans, send, {
+      approval_token: plan.approval_token,
+      payload_hash: plan.payload_hash,
+    }),
+    /Unknown or expired approval token/,
+  );
+  await assert.rejects(
+    confirmAdvert(plans, send, {
+      approval_token: plan.approval_token,
+      payload_hash: plan.payload_hash,
+      id: plan.id,
+    }),
+    /does not match this advert plan/,
+  );
+  assert.equal(plans.get(plan.id).state, "pending");
 });
