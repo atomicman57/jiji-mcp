@@ -95,9 +95,14 @@ export function browserProxy(env = {}) {
     throw new Error(
       "JIJI_BROWSER_PROXY must be an http, https, socks4 or socks5 URL with only a host and port.",
     );
-  const port = explicitPort(raw);
-  if (!port)
+  const portText = explicitPort(raw);
+  if (!portText)
     throw new Error("JIJI_BROWSER_PROXY must include an explicit port.");
+  const port = Number.parseInt(portText, 10);
+  if (!(port >= 1 && port <= 65535))
+    throw new Error(
+      "JIJI_BROWSER_PROXY port must be an integer from 1 to 65535.",
+    );
   const urlUsername = decodePart(url.username);
   const urlPassword = decodePart(url.password);
   const envUsername = envPart(env.JIJI_BROWSER_PROXY_USERNAME);
@@ -123,8 +128,7 @@ export function browserProxy(env = {}) {
       ? "[" + url.hostname + "]"
       : url.hostname;
   const proxy = {
-    server:
-      url.protocol + "//" + host + ":" + (url.port || String(Number(port))),
+    server: url.protocol + "//" + host + ":" + port,
   };
   if (username) {
     proxy.username = username;

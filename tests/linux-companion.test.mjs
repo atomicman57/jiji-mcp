@@ -215,6 +215,35 @@ test("browser proxy keeps explicit default ports and IPv6 hosts", () => {
       password: "p@ss",
     },
   );
+  assert.equal(
+    server("https://proxy.example:0089"),
+    "https://proxy.example:89",
+  );
+  assert.equal(
+    server("https://proxy.example:65535"),
+    "https://proxy.example:65535",
+  );
+  const range = "JIJI_BROWSER_PROXY port must be an integer from 1 to 65535.";
+  for (const bad of [
+    "https://proxy.example:0",
+    "https://proxy.example:000",
+    "https://secret-user:secret-pass@proxy.example:0",
+    "https://[2001:db8::1]:0",
+  ])
+    assert.throws(
+      () => browserLaunchOptions({ JIJI_BROWSER_PROXY: bad }),
+      (error) => error.message === range,
+    );
+  assert.throws(
+    () =>
+      browserLaunchOptions({
+        JIJI_BROWSER_PROXY:
+          "https://secret-user:secret-pass@proxy.example:65536",
+      }),
+    (error) =>
+      error.message ===
+      "JIJI_BROWSER_PROXY must be a URL like https://host:port.",
+  );
   const port = "JIJI_BROWSER_PROXY must include an explicit port.";
   for (const bad of [
     "https://proxy.example",

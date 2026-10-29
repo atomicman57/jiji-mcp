@@ -43,11 +43,14 @@ export function photoUploadPath(params = {}) {
   );
 }
 
+const BROWSER_LAUNCH_FAILED = "browser launch failed (check proxy config)";
+
 export class JijiBrowser {
   constructor(profile) {
     this.profile = profile;
     this.context = null;
     this.page = null;
+    this.lastError = null;
     this.queue = Promise.resolve();
     this.lastRequest = 0;
     this.conversations = new Map();
@@ -66,11 +69,16 @@ export class JijiBrowser {
         this.page = existing;
         return existing;
       }
-      this.page = await this.context.newPage();
-      await this.page.goto("https://jiji.ng/", {
-        waitUntil: "domcontentloaded",
-        timeout: 30000,
-      });
+      try {
+        this.page = await this.context.newPage();
+        await this.page.goto("https://jiji.ng/", {
+          waitUntil: "domcontentloaded",
+          timeout: 30000,
+        });
+      } catch (error) {
+        throw await this.startupFailed(error);
+      }
+      this.lastError = null;
       return this.page;
     }
     await fs.mkdir(this.profile, { recursive: true, mode: 0o700 });
@@ -82,22 +90,31 @@ export class JijiBrowser {
         this.profile,
         options,
       );
+      this.context.on("close", () => {
+        this.context = null;
+        this.page = null;
+      });
+      this.page = this.context.pages()[0] || (await this.context.newPage());
+      await this.page.goto("https://jiji.ng/", {
+        waitUntil: "domcontentloaded",
+        timeout: 30000,
+      });
     } catch (error) {
-      // Playwright's message can echo the proxy server or credentials, so only
-      // the error name is logged and a fixed message reaches status/sockets.
-      console.error("browser launch failed: " + (error?.name || "Error"));
-      throw new Error("browser launch failed (check proxy config)");
+      throw await this.startupFailed(error);
     }
-    this.context.on("close", () => {
-      this.context = null;
-      this.page = null;
-    });
-    this.page = this.context.pages()[0] || (await this.context.newPage());
-    await this.page.goto("https://jiji.ng/", {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
+    this.lastError = null;
     return this.page;
+  }
+  // Playwright launch and navigation messages can echo the proxy server or
+  // credentials, so only the error name is logged, the half-open browser is
+  // closed, and a fixed message reaches status/sockets.
+  async startupFailed(error) {
+    console.error("browser launch failed: " + (error?.name || "Error"));
+    await this.context?.close().catch(() => {});
+    this.context = null;
+    this.page = null;
+    this.lastError = BROWSER_LAUNCH_FAILED;
+    return new Error(BROWSER_LAUNCH_FAILED);
   }
   async jijiPage() {
     const page = await this.open();
@@ -115,6 +132,7 @@ export class JijiBrowser {
         signed_in: false,
         login_required: true,
         extension_required: false,
+        ...(this.lastError && { last_error: this.lastError }),
       };
     const page = this.page;
     if (new URL(page.url()).origin !== "https://jiji.ng")
