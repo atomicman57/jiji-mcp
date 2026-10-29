@@ -223,3 +223,59 @@ export function browserLaunchOptions(env = {}, proxy) {
   }
   return options;
 }
+
+// Values an error may echo from proxy config: shared credentials and URL
+// userinfo, raw and decoded. `source` is a parsed proxy list or an env object;
+// env values are read leniently because this runs on error paths.
+function proxySecrets(source) {
+  const secrets = new Set();
+  const add = (value) => {
+    if (!defined(value)) return;
+    const text = String(value);
+    secrets.add(text);
+    try {
+      secrets.add(decodeURIComponent(text));
+    } catch {}
+    secrets.add(encodeURIComponent(text));
+  };
+  if (Array.isArray(source))
+    for (const proxy of source) {
+      add(proxy?.username);
+      add(proxy?.password);
+    }
+  else if (source && typeof source === "object") {
+    add(source.JIJI_BROWSER_PROXY_USERNAME);
+    add(source.JIJI_BROWSER_PROXY_PASSWORD);
+    for (const raw of [source.JIJI_BROWSER_PROXY, source.JIJI_BROWSER_PROXIES])
+      for (const entry of defined(raw) ? String(raw).split(/[,\s]+/) : [])
+        try {
+          const url = new URL(entry);
+          add(url.username);
+          add(url.password);
+        } catch {}
+  }
+  return [...secrets].sort((a, b) => b.length - a.length);
+}
+
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi;
+
+// Strips URL userinfo and any configured proxy username/password from a
+// string, or from every string inside an array or plain object.
+export function scrubProxySecrets(value, ...sources) {
+  const secrets = sources.flatMap(proxySecrets);
+  const scrub = (item) => {
+    if (typeof item === "string") {
+      let text = item.replace(URL_USERINFO, "$1");
+      for (const secret of secrets)
+        text = text.split(secret).join("[redacted]");
+      return text;
+    }
+    if (Array.isArray(item)) return item.map(scrub);
+    if (item && Object.getPrototypeOf(item) === Object.prototype)
+      return Object.fromEntries(
+        Object.entries(item).map(([key, entry]) => [key, scrub(entry)]),
+      );
+    return item;
+  };
+  return scrub(value);
+}

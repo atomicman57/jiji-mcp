@@ -174,6 +174,46 @@ test("every proxy failing leaves the browser closed with a generic error", async
   assert.doesNotMatch(logged.join("\n"), LEAK);
 });
 
+// Chrome reports a proxy's 407 this way, without "407" or "proxy".
+test("a Chrome 407 (ERR_HTTP_RESPONSE_CODE_FAILURE) fails over to the next entry", async (t) => {
+  const { browser, attempts, closed, logged } = await harness(
+    t,
+    { JIJI_BROWSER_PROXIES: A + "," + B },
+    {
+      [A]: new Error(
+        "page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://jiji.ng/",
+      ),
+    },
+  );
+  await browser.open();
+  assert.deepEqual(
+    attempts.map((proxy) => proxy.server),
+    [A, B],
+  );
+  assert.deepEqual(closed, [A]);
+  assert.equal(browser.activeProxyIndex, 1);
+  assert.equal((await browser.status()).proxy, "ng14.proxy.example:89");
+  assert.doesNotMatch(logged.join("\n"), LEAK);
+});
+
+test("a Chrome 407 on a later navigation moves to the next proxy", async (t) => {
+  const { browser, attempts } = await harness(
+    t,
+    { JIJI_BROWSER_PROXIES: A + "," + B },
+    {},
+  );
+  await browser.open();
+  browser.page.goto = async () => {
+    throw new Error(
+      "page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://jiji.ng/profile-messages",
+    );
+  };
+  const page = await browser.go("/profile-messages");
+  assert.equal(page.url(), "https://jiji.ng/profile-messages");
+  assert.equal(browser.activeProxyIndex, 1);
+  assert.equal(attempts.length, 2);
+});
+
 test("a Cloudflare challenge on the first navigation fails over", async (t) => {
   const { browser, attempts, closed } = await harness(
     t,
@@ -481,7 +521,11 @@ test("proxy failure and Cloudflare challenge detection stay tight", () => {
     "net::ERR_PROXY_CONNECTION_FAILED",
     "net::ERR_TUNNEL_CONNECTION_FAILED",
     "net::ERR_PROXY_AUTH_UNSUPPORTED",
+    "net::ERR_PROXY_AUTH_REQUESTED",
+    "net::ERR_PROXY_AUTH_REQUESTED_WITH_NO_CONNECTION",
+    "page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://jiji.ng/",
     "HTTP 407 Proxy Authentication Required",
+    "Proxy Authentication Required",
     "page.goto: Timeout 30000ms exceeded.",
   ])
     assert.equal(isProxyFailure(new Error(message)), true, message);

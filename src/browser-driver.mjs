@@ -2,7 +2,11 @@ import { chromium } from "playwright";
 import fs from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { validatePath, listingUrl, chatUrl } from "./protocol.mjs";
-import { browserLaunchOptions, browserProxyList } from "./runtime-policy.mjs";
+import {
+  browserLaunchOptions,
+  browserProxyList,
+  scrubProxySecrets,
+} from "./runtime-policy.mjs";
 import {
   buildRead,
   buildAction,
@@ -50,12 +54,15 @@ const HOME = "https://jiji.ng/";
 const NAVIGATION = { waitUntil: "domcontentloaded", timeout: 30000 };
 
 // Only consulted while a proxy is in use, so a navigation timeout counts as a
-// proxy failure there.
+// proxy failure there. Chrome reports a proxy's 407 as
+// ERR_HTTP_RESPONSE_CODE_FAILURE, usually without "407" or "proxy" in the text.
 export function isProxyFailure(error) {
   if (error?.status === 407 || error?.name === "TimeoutError") return true;
   const message = String(error?.message || "");
   return (
-    /ERR_PROXY|ERR_TUNNEL_CONNECTION_FAILED|proxy/i.test(message) ||
+    /ERR_PROXY|ERR_TUNNEL_CONNECTION_FAILED|ERR_HTTP_RESPONSE_CODE_FAILURE|proxy/i.test(
+      message,
+    ) ||
     /\b407\b/.test(message) ||
     /Timeout \d+ms exceeded/.test(message)
   );
@@ -106,13 +113,23 @@ export class JijiBrowser {
     this.profile = profile;
     this.context = null;
     this.page = null;
-    this.lastError = null;
     this.proxies = null;
+    this.lastError = null;
     this.activeProxyIndex = null;
     this.queue = Promise.resolve();
     this.lastRequest = 0;
     this.conversations = new Map();
     this.photoOptions = { roots: photoRoots() };
+  }
+  // Status text is scrubbed on the way in, so a dirty string never sticks.
+  get lastError() {
+    return this.storedError;
+  }
+  set lastError(value) {
+    this.storedError = value == null ? null : this.scrub(String(value));
+  }
+  scrub(value) {
+    return scrubProxySecrets(value, this.proxies || [], process.env);
   }
   run(fn) {
     const task = this.queue.then(fn);
@@ -227,6 +244,9 @@ export class JijiBrowser {
     return page;
   }
   async status() {
+    return this.scrub(await this.readStatus());
+  }
+  async readStatus() {
     if (!this.context || !this.page || this.page.isClosed())
       return {
         connected: true,
@@ -438,6 +458,20 @@ export class JijiBrowser {
     }
     return page;
   }
+  // Runs Playwright steps that navigate or wait on navigation. While a proxy
+  // is active their messages can echo the proxy URL with credentials, so any
+  // failure becomes the fixed error. A failed `navigation` is flagged when
+  // another proxy could help; callers decide whether retrying is safe.
+  async proxied(fn, navigation = false) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (this.activeProxyIndex === null) throw error;
+      throw Object.assign(new Error(PROXY_NAVIGATION_FAILED), {
+        canFailOver: navigation && this.canFailOver(error),
+      });
+    }
+  }
   async inbox() {
     const page = await this.go("/profile-messages");
     await page
@@ -486,37 +520,52 @@ export class JijiBrowser {
       throw new Error(
         "Conversation reference expired. List conversations again.",
       );
+    // Opening a room only reads it, so a proxy-class failure fails over and
+    // retries once.
+    try {
+      return await this.enterConversation(item);
+    } catch (error) {
+      if (!error?.canFailOver) throw error;
+      await this.failOver();
+      return this.enterConversation(item);
+    }
+  }
+  async enterConversation(item) {
     const page = await this.go("/profile-messages");
-    await page
-      .locator(".qa-room-label-link")
-      .first()
-      .waitFor({ timeout: 12000 });
-    const matches = await page.locator(".qa-room-label-link").evaluateAll(
-      (rows, item) =>
-        rows
-          .map((row, index) => ({
-            index,
-            seller: row
-              .querySelector(".qa-room-label-link-name")
-              ?.textContent?.trim(),
-            title: row
-              .querySelector(".qa-room-label-link-title")
-              ?.textContent?.trim(),
-          }))
-          .filter(
-            (row) => row.seller === item.seller && row.title === item.title,
-          ),
-      item,
-    );
+    const matches = await this.proxied(async () => {
+      await page
+        .locator(".qa-room-label-link")
+        .first()
+        .waitFor({ timeout: 12000 });
+      return page.locator(".qa-room-label-link").evaluateAll(
+        (rows, item) =>
+          rows
+            .map((row, index) => ({
+              index,
+              seller: row
+                .querySelector(".qa-room-label-link-name")
+                ?.textContent?.trim(),
+              title: row
+                .querySelector(".qa-room-label-link-title")
+                ?.textContent?.trim(),
+            }))
+            .filter(
+              (row) => row.seller === item.seller && row.title === item.title,
+            ),
+        item,
+      );
+    });
     if (matches.length !== 1)
       throw new Error("Conversation could not be identified uniquely.");
-    await page.locator(".qa-room-label-link").nth(matches[0].index).click();
-    await page
-      .locator(".qa-messenger-send-message-textarea")
-      .waitFor({ timeout: 12000 });
-    await page.waitForURL((url) => Boolean(chatUrl(url.href)), {
-      timeout: 12000,
-    });
+    await this.proxied(async () => {
+      await page.locator(".qa-room-label-link").nth(matches[0].index).click();
+      await page
+        .locator(".qa-messenger-send-message-textarea")
+        .waitFor({ timeout: 12000 });
+      await page.waitForURL((url) => Boolean(chatUrl(url.href)), {
+        timeout: 12000,
+      });
+    }, true);
     return { page, item };
   }
   async conversation(key) {
@@ -759,26 +808,30 @@ export class JijiBrowser {
           "Jiji accepted the approved native offer. Delivery/read status is not established.",
       };
     }
-    const before = await page
-      .locator(".b-messenger-room-message-owner .qa-message-text")
-      .count();
-    await editor.fill(plan.message);
-    await editor.press("Enter");
-    await page.waitForFunction(
-      ({ before, text }) => {
-        const all = [
-          ...document.querySelectorAll(
-            ".b-messenger-room-message-owner .qa-message-text",
-          ),
-        ];
-        return (
-          all.length > before &&
-          all.some((e) => e.textContent.trim() === text.trim())
-        );
-      },
-      { before, text: plan.message },
-      { timeout: 10000 },
-    );
+    // From here the message may already be out, so failures are never retried
+    // through another proxy; the plan becomes uncertain.
+    await this.proxied(async () => {
+      const before = await page
+        .locator(".b-messenger-room-message-owner .qa-message-text")
+        .count();
+      await editor.fill(plan.message);
+      await editor.press("Enter");
+      await page.waitForFunction(
+        ({ before, text }) => {
+          const all = [
+            ...document.querySelectorAll(
+              ".b-messenger-room-message-owner .qa-message-text",
+            ),
+          ];
+          return (
+            all.length > before &&
+            all.some((e) => e.textContent.trim() === text.trim())
+          );
+        },
+        { before, text: plan.message },
+        { timeout: 10000 },
+      );
+    });
     return {
       sent: true,
       delivery_verified: false,
@@ -802,104 +855,106 @@ export class JijiBrowser {
     const pause = Math.max(0, 1200 - (Date.now() - this.lastRequest));
     if (pause) await new Promise((r) => setTimeout(r, pause));
     this.lastRequest = Date.now();
-    return page.evaluate(
-      async ({ path, method, body, ownerContacts }) => {
-        try {
-          if (location.origin !== "https://jiji.ng")
-            return { error: "Complete Jiji login in the browser." };
-          const r = await fetch(path, {
-            method,
-            credentials: "include",
-            redirect: "error",
-            headers: {
-              "X-Requested-With": "XMLHttpRequest",
-              ...(method !== "GET"
-                ? { "Content-Type": "application/json" }
-                : {}),
-            },
-            ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-            signal: AbortSignal.timeout(20000),
-          });
-          if (!r.ok) return { status: r.status };
-          if (r.status === 204) return { status: r.status, body: {} };
-          if (!r.headers.get("content-type")?.includes("application/json"))
+    return this.proxied(() =>
+      page.evaluate(
+        async ({ path, method, body, ownerContacts }) => {
+          try {
+            if (location.origin !== "https://jiji.ng")
+              return { error: "Complete Jiji login in the browser." };
+            const r = await fetch(path, {
+              method,
+              credentials: "include",
+              redirect: "error",
+              headers: {
+                "X-Requested-With": "XMLHttpRequest",
+                ...(method !== "GET"
+                  ? { "Content-Type": "application/json" }
+                  : {}),
+              },
+              ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
+              signal: AbortSignal.timeout(20000),
+            });
+            if (!r.ok) return { status: r.status };
+            if (r.status === 204) return { status: r.status, body: {} };
+            if (!r.headers.get("content-type")?.includes("application/json"))
+              return {
+                error:
+                  "Jiji returned HTML or a challenge. Continue on Jiji; no retry was attempted.",
+              };
+            const text = await r.text();
+            if (text.length > 6 * 1024 * 1024)
+              return { error: "Response too large." };
+            const contactField = (name) =>
+              /(^|_)(phones?|mobile|whatsapp|e_?mail)(_(numbers?|address|formatted|raw))?$/.test(
+                name.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase(),
+              );
+            const clean = (value, depth = 0) => {
+              if (depth > 18) return null;
+              if (Array.isArray(value))
+                return value.slice(0, 60).map((v) => clean(v, depth + 1));
+              if (value && typeof value === "object") {
+                if (
+                  typeof value.name === "string" &&
+                  /password|otp|csrf|auth.?token|verification.?code/i.test(
+                    value.name,
+                  )
+                )
+                  return { name: value.name, owner_only: true };
+                if (
+                  !ownerContacts &&
+                  typeof value.name === "string" &&
+                  contactField(value.name)
+                )
+                  return { name: value.name, selected_contact_required: true };
+                return Object.fromEntries(
+                  Object.entries(value)
+                    .filter(
+                      ([k, v]) =>
+                        (ownerContacts ||
+                          typeof v === "boolean" ||
+                          !contactField(k)) &&
+                        !/password|csrf|cookie|authorization|token|secret|session|passkey|webauthn|challenge|otp|credential|private.?key|signed.?url|upload.?url/i.test(
+                          k,
+                        ),
+                    )
+                    .map(([k, v]) => [k, clean(v, depth + 1)]),
+                );
+              }
+              if (typeof value === "string") {
+                if (
+                  !ownerContacts &&
+                  /^(?:tel:|whatsapp:|https?:\/\/(?:wa\.me\/|(?:api\.|web\.)?whatsapp\.com\/send\?))/i.test(
+                    value,
+                  )
+                )
+                  return "[selected contact required]";
+                if (/^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(value))
+                  return "[credential omitted]";
+                if (/^https?:\/\//.test(value)) {
+                  try {
+                    const u = new URL(value);
+                    if (
+                      [...u.searchParams.keys()].some((k) =>
+                        /token|signature|secret|x-amz-/i.test(k),
+                      )
+                    )
+                      return u.origin + u.pathname;
+                  } catch {}
+                }
+                return value.slice(0, 12000);
+              }
+              return value;
+            };
+            return { status: r.status, body: clean(JSON.parse(text)) };
+          } catch {
             return {
               error:
-                "Jiji returned HTML or a challenge. Continue on Jiji; no retry was attempted.",
+                "Jiji request did not complete. Do not retry a write automatically; check its status on Jiji.",
             };
-          const text = await r.text();
-          if (text.length > 6 * 1024 * 1024)
-            return { error: "Response too large." };
-          const contactField = (name) =>
-            /(^|_)(phones?|mobile|whatsapp|e_?mail)(_(numbers?|address|formatted|raw))?$/.test(
-              name.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase(),
-            );
-          const clean = (value, depth = 0) => {
-            if (depth > 18) return null;
-            if (Array.isArray(value))
-              return value.slice(0, 60).map((v) => clean(v, depth + 1));
-            if (value && typeof value === "object") {
-              if (
-                typeof value.name === "string" &&
-                /password|otp|csrf|auth.?token|verification.?code/i.test(
-                  value.name,
-                )
-              )
-                return { name: value.name, owner_only: true };
-              if (
-                !ownerContacts &&
-                typeof value.name === "string" &&
-                contactField(value.name)
-              )
-                return { name: value.name, selected_contact_required: true };
-              return Object.fromEntries(
-                Object.entries(value)
-                  .filter(
-                    ([k, v]) =>
-                      (ownerContacts ||
-                        typeof v === "boolean" ||
-                        !contactField(k)) &&
-                      !/password|csrf|cookie|authorization|token|secret|session|passkey|webauthn|challenge|otp|credential|private.?key|signed.?url|upload.?url/i.test(
-                        k,
-                      ),
-                  )
-                  .map(([k, v]) => [k, clean(v, depth + 1)]),
-              );
-            }
-            if (typeof value === "string") {
-              if (
-                !ownerContacts &&
-                /^(?:tel:|whatsapp:|https?:\/\/(?:wa\.me\/|(?:api\.|web\.)?whatsapp\.com\/send\?))/i.test(
-                  value,
-                )
-              )
-                return "[selected contact required]";
-              if (/^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(value))
-                return "[credential omitted]";
-              if (/^https?:\/\//.test(value)) {
-                try {
-                  const u = new URL(value);
-                  if (
-                    [...u.searchParams.keys()].some((k) =>
-                      /token|signature|secret|x-amz-/i.test(k),
-                    )
-                  )
-                    return u.origin + u.pathname;
-                } catch {}
-              }
-              return value.slice(0, 12000);
-            }
-            return value;
-          };
-          return { status: r.status, body: clean(JSON.parse(text)) };
-        } catch {
-          return {
-            error:
-              "Jiji request did not complete. Do not retry a write automatically; check its status on Jiji.",
-          };
-        }
-      },
-      { path: u.pathname + u.search, method, body, ownerContacts },
+          }
+        },
+        { path: u.pathname + u.search, method, body, ownerContacts },
+      ),
     );
   }
   async readResource(name, parameters) {

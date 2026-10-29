@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { scrubProxySecrets } from "./runtime-policy.mjs";
 export class ApprovalPlans {
   constructor() {
     this.plans = new Map();
@@ -65,7 +66,7 @@ export class ApprovalPlans {
       const nothingSent = e?.nothingSent === true;
       p.state = nothingSent ? "failed" : "uncertain";
       p.result = {
-        error: e.message,
+        error: scrubProxySecrets(String(e?.message), process.env),
         message: nothingSent
           ? "Nothing was sent. This plan will not be retried."
           : "No automatic retry. Check the result on Jiji before preparing another action.",

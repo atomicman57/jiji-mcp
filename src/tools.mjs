@@ -5,6 +5,7 @@ import { validatePath, normalize } from "./protocol.mjs";
 import { registerFeatures } from "./features.mjs";
 import { registerPlatformTools } from "./platform-tools.mjs";
 import { searchFields, searchPath } from "./search.mjs";
+import { scrubProxySecrets } from "./runtime-policy.mjs";
 export function createServer(request, { cursors = new Map() } = {}) {
   const server = new McpServer(
     { name: "jiji", version: "0.3.3" },
@@ -39,7 +40,15 @@ export function createServer(request, { cursors = new Map() } = {}) {
         } catch (e) {
           return {
             isError: true,
-            content: [{ type: "text", text: e.message }],
+            content: [
+              {
+                type: "text",
+                text: scrubProxySecrets(
+                  String(e?.message),
+                  globalThis.process?.env,
+                ),
+              },
+            ],
           };
         }
       },
