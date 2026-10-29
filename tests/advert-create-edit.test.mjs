@@ -13,12 +13,16 @@ import { confirmAdvert, prepareAdvertPlan } from "../src/advert-confirm.mjs";
 import {
   CATEGORY_HINTS,
   assertFreeOnly,
+  freePromoValue,
   isPromoField,
   resolveCategoryPath,
 } from "../src/advert-form.mjs";
 import {
   assertPublicUrl,
   downloadPhoto,
+  isPublicAddress,
+  publicLookup,
+  readPhoto,
   removeDownloaded,
 } from "../src/advert-photos.mjs";
 import { createServer } from "../src/tools.mjs";
@@ -30,24 +34,28 @@ import {
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]);
-const publicDns = async () => [{ address: "93.184.216.34", family: 4 }];
 
-async function tempPhotos() {
+// Creates photos in a temp folder and allows only that folder for `browser`.
+async function tempPhotos(browser) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "jiji-advert-test-"));
   const a = path.join(dir, "front.jpg");
   const b = path.join(dir, "back.png");
   await fs.writeFile(a, JPEG);
   await fs.writeFile(b, PNG);
+  if (browser) browser.photoOptions = { roots: [dir] };
   return { dir, a, b };
 }
 
-const mockImageFetch =
-  (bytes, type = "image/jpeg") =>
-  async (url) =>
-    new Response(bytes, {
-      status: 200,
-      headers: { "content-type": type, "content-length": String(bytes.length) },
-    });
+// Mock downloader (no network): returns a fetch-like response.
+const mockGet =
+  (bytes, { length = bytes.length } = {}) =>
+  async () => ({
+    status: 200,
+    headers: {
+      get: (k) => (k === "content-length" && length ? String(length) : null),
+    },
+    body: [bytes],
+  });
 
 const solarCreate = (extra = {}) => ({
   category_path: CATEGORY_HINTS.solar_panels,
@@ -81,8 +89,9 @@ test("solar panels resolve to Repair & Construction > Electrical Equipment from 
 
 test("create preview includes category attributes, price, negotiable, photo order and free promo", async () => {
   const { browser, state } = mockAdvertBrowser(JijiBrowser);
-  const { dir, a } = await tempPhotos();
+  const { dir, a } = await tempPhotos(browser);
   try {
+    browser.photoOptions.get = mockGet(PNG);
     const prepared = await browser.prepareAdvert(
       solarCreate({
         photos: [
@@ -90,7 +99,6 @@ test("create preview includes category attributes, price, negotiable, photo orde
           { url: "https://cdn.example.com/p/side.png?sig=secret" },
         ],
       }),
-      { fetchImpl: mockImageFetch(PNG, "image/png"), lookup: publicDns },
     );
     const p = prepared.preview;
     assert.equal(p.action, "create");
@@ -172,6 +180,47 @@ test("promo detection ignores ordinary attributes and catches paid-looking optio
   assert.equal(isPromoField(f("attr_8", "Top Load")), false);
   assert.equal(isPromoField(f("attr_9", "Laptop Brand")), false);
   assert.equal(isPromoField(f("price_negotiable", "Negotiable")), false);
+  assert.equal(isPromoField(f("industrial_use", "Industrial use")), false);
+  assert.equal(isPromoField(f("signal_booster", "Signal booster")), false);
+  assert.equal(isPromoField(f("attr_12", "Premium Quality")), false);
+  // "price" in a promo label does not hide the promo step.
+  assert.equal(
+    isPromoField(f("attr_13", "Promote your ad (prices from ₦1,500)")),
+    true,
+  );
+  // Only an explicit no-promo choice is free; Basic/priced tiers are not.
+  assert.throws(
+    () =>
+      freePromoValue(
+        f("package_id", "", [
+          { value: "b", label: "Basic" },
+          { value: "s", label: "Standard" },
+        ]),
+      ),
+    /has no free option/,
+  );
+  assert.equal(
+    freePromoValue(
+      f("package_id", "", [
+        { value: "b", label: "Basic" },
+        { value: "n", label: "No promo" },
+      ]),
+    ),
+    "n",
+  );
+  assert.throws(
+    () =>
+      freePromoValue(
+        f("package_id", "", [{ value: "x", label: "None", price: 1500 }]),
+      ),
+    /has no free option/,
+  );
+  // A hidden, pre-filled promo value without choices fails closed.
+  assert.throws(
+    () => freePromoValue({ name: "promo_package_id", value: "trial" }),
+    /without a free choice/,
+  );
+  assert.equal(freePromoValue({ name: "promo_package_id", value: "" }), null);
   assert.equal(isPromoField(f("package_id", "")), true);
   assert.equal(isPromoField(f("attr_10", "Promote your ad")), true);
   assert.equal(
@@ -211,30 +260,77 @@ test("paid promo fields are rejected", async () => {
 });
 
 test("photo URL download checks host, type and size", async () => {
+  assert.throws(() => assertPublicUrl("http://cdn.example.com/a.jpg"), /https/);
+  for (const host of [
+    "127.0.0.1",
+    "[::1]",
+    "[::ffff:127.0.0.1]",
+    "[::ffff:a9fe:a9fe]",
+    "[64:ff9b::7f00:1]",
+    "[2002:7f00:1::]",
+    "[fec0::1]",
+    "198.18.0.1",
+    "169.254.169.254",
+    "localhost",
+  ])
+    assert.throws(
+      () => assertPublicUrl(`https://${host}/a.jpg`),
+      /public host/,
+      host,
+    );
+  assert.equal(isPublicAddress("93.184.216.34"), true);
+  assert.equal(isPublicAddress("2606:4700::1111"), true);
+  // The connection's own lookup refuses private answers (no DNS rebinding gap).
+  const resolveTo = (address) =>
+    new Promise((resolve) =>
+      publicLookup((host, opts, cb) =>
+        cb(null, [{ address, family: address.includes(":") ? 6 : 4 }]),
+      )("cdn.example.com", {}, (err, addr) =>
+        resolve(err ? err.message : addr),
+      ),
+    );
+  assert.match(await resolveTo("10.0.0.5"), /public host/);
+  assert.match(await resolveTo("::ffff:7f00:1"), /public host/);
+  assert.equal(await resolveTo("93.184.216.34"), "93.184.216.34");
+  // The real https download path uses that lookup; refused before connecting.
   await assert.rejects(
-    assertPublicUrl("http://cdn.example.com/a.jpg", publicDns),
-    /https/,
-  );
-  await assert.rejects(
-    assertPublicUrl("https://127.0.0.1/a.jpg", publicDns),
-    /public host/,
-  );
-  await assert.rejects(
-    assertPublicUrl("https://intranet.example.com/a.jpg", async () => [
-      { address: "10.0.0.5", family: 4 },
-    ]),
+    downloadPhoto("https://images.example.test/a.jpg", {
+      lookup: (h, o, cb) => cb(null, [{ address: "127.0.0.1", family: 4 }]),
+    }),
     /public host/,
   );
   await assert.rejects(
     downloadPhoto("https://cdn.example.com/a.jpg", {
-      fetchImpl: mockImageFetch(Buffer.from("<html>not an image</html>")),
-      lookup: publicDns,
+      get: mockGet(Buffer.from("<html>not an image</html>")),
     }),
     /not a JPEG, PNG or WebP/,
   );
+  // Size is enforced while streaming, even without content-length.
+  await assert.rejects(
+    downloadPhoto("https://cdn.example.com/big.jpg", {
+      get: async () => ({
+        status: 200,
+        headers: { get: () => null },
+        body: (async function* () {
+          yield JPEG;
+          for (let i = 0; i < 11; i++) yield Buffer.alloc(1024 * 1024);
+        })(),
+      }),
+    }),
+    /larger than 10 MB/,
+  );
+  // Redirects to a private host are refused.
+  await assert.rejects(
+    downloadPhoto("https://cdn.example.com/a.jpg", {
+      get: async () => ({
+        status: 302,
+        headers: { get: () => "https://127.0.0.1/a.jpg" },
+      }),
+    }),
+    /public host/,
+  );
   const ok = await downloadPhoto("https://cdn.example.com/a.jpg", {
-    fetchImpl: mockImageFetch(JPEG),
-    lookup: publicDns,
+    get: mockGet(JPEG),
   });
   assert.equal(ok.type, "image/jpeg");
   assert.equal((await fs.stat(ok.path)).mode & 0o777, 0o600);
@@ -245,6 +341,38 @@ test("photo URL download checks host, type and size", async () => {
   await removeDownloaded([{ path: a, downloaded: true }]);
   assert.ok((await fs.stat(a)).isFile());
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("local photo paths must be regular files inside an allowed folder", async () => {
+  const { dir, a } = await tempPhotos();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "jiji-outside-"));
+  try {
+    const secret = path.join(outside, "passport.jpg");
+    await fs.writeFile(secret, JPEG);
+    const link = path.join(dir, "link.jpg");
+    await fs.symlink(secret, link);
+    assert.equal((await readPhoto(a, { roots: [dir] })).type, "image/jpeg");
+    for (const file of [
+      secret,
+      link,
+      path.join(outside, "missing.jpg"),
+      path.join(dir, "..", path.basename(outside), "passport.jpg"),
+      "relative.jpg",
+    ])
+      await assert.rejects(
+        readPhoto(file, { roots: [dir] }),
+        /Photo is not available\. Put advert photos in an allowed folder/,
+        file,
+      );
+    // The `downloaded` flag cannot unlock files outside this module's temp dirs.
+    await assert.rejects(
+      readPhoto(secret, { roots: [dir], downloaded: true }),
+      /not available/,
+    );
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("photo upload route comes from Jiji's form params and stays same-origin", () => {
@@ -263,7 +391,7 @@ test("photo upload route comes from Jiji's form params and stays same-origin", (
 
 test("confirm uploads new photos in order and submits once with matching token and payload", async () => {
   const { browser, state } = mockAdvertBrowser(JijiBrowser);
-  const { dir, a, b } = await tempPhotos();
+  const { dir, a, b } = await tempPhotos(browser);
   try {
     const plans = new ApprovalPlans();
     const prepared = await browser.prepareAdvert(
@@ -395,9 +523,28 @@ test("confirm rejects expired, mismatched, wrong-plan and payload-changed tokens
   assert.equal(state.writes.length, 0);
 });
 
+test("confirm marks a failed live re-read as failed, not uncertain", async () => {
+  const { browser, state } = mockAdvertBrowser(JijiBrowser);
+  const plans = new ApprovalPlans();
+  const plan = prepareAdvertPlan(
+    plans,
+    await browser.prepareAdvert(solarCreate()),
+  );
+  state.base.params.advert_id = 13;
+  state.base.params.modify_advert_url = "/api_web/v1/item/modify/13.json";
+  const result = await confirmAdvert(
+    plans,
+    (p) => browser.executeAdvert(p.parameters, p.payload_hash),
+    { approval_token: plan.approval_token, payload_hash: plan.payload_hash },
+  );
+  assert.equal(result.state, "failed");
+  assert.match(result.result.error, /form changed.*Nothing was sent/);
+  assert.equal(state.writes.length, 0);
+});
+
 test("confirm refuses when a previewed photo file changed on disk", async () => {
   const { browser, state } = mockAdvertBrowser(JijiBrowser);
-  const { dir, a } = await tempPhotos();
+  const { dir, a } = await tempPhotos(browser);
   try {
     const plans = new ApprovalPlans();
     const plan = prepareAdvertPlan(
@@ -428,7 +575,7 @@ test("edit uses advert_edit_form, preserves identity, and reorders/deletes/adds 
       { id: 903, url: "https://pictures.example/903.jpg" },
     ],
   });
-  const { dir, a } = await tempPhotos();
+  const { dir, a } = await tempPhotos(browser);
   try {
     const prepared = await browser.prepareAdvert({
       advert_id: 77,

@@ -11,15 +11,23 @@ export const CATEGORY_HINTS = {
 };
 
 // Promotion controls are recognised by name, label or paid-looking options.
-// Kept narrow so category attributes such as "Package Type" or "Top Load"
-// are not mistaken for the promo step.
+// Name/label words are anchored so attributes such as "Package Type",
+// "Top Load", "industrial_use" or "Premium Quality" are not mistaken for the
+// promo step.
 const PROMO_NAME =
-  /promo|premium|boost|trial|vip|(^|_)top(_|$)|(^|_)packages?(_id)?$|paid_?package/i;
-const PROMO_LABEL = /promo|premium|boost|free trial|top ads?\b|vip/i;
+  /(^|_)promo|(^|_)(premium|boost|trial|vip|top|packages?|package_id)(_|$)|paid_?package/i;
+const PROMO_LABEL =
+  /\bpromot|\bpromo\b|\bboost\b|free trial|\btop ads?\b|\bvip\b|premium (ad|package|listing|service)/i;
 const PROMO_OPTION =
   /\b(top|boost|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b|\bfree trial\b/i;
-const FREE_OPTION = /no\s*promo|^free$|^none$|without|^no$|^standard$|^basic$/i;
+// Only an explicit "no promotion" choice counts as free; "Basic"/"Standard"
+// tiers are not assumed to be free.
+const FREE_OPTION = /^(no\s*promo(tion)?|free|none|no|without promo(tion)?)$/i;
 const PAID_OPTION = /trial|day|week|month|top|boost|vip|premium|diamond|gold/i;
+const optionCost = (o) =>
+  o && typeof o === "object"
+    ? Number(o.price ?? o.amount ?? o.cost ?? o.price_value ?? 0) || 0
+    : 0;
 const PHOTO_FIELD = /^(images|image_ids|photos|photo_ids)$/;
 
 const text = (v) => (v === undefined || v === null ? "" : String(v)).trim();
@@ -53,7 +61,7 @@ export function flattenFields(...groups) {
 
 const describe = (f) => `${f.name} ${f.label}`;
 export const isPromoField = (f) =>
-  !/price|negotiab/i.test(describe(f)) &&
+  !/price|negotiab/i.test(f.name) &&
   (PROMO_NAME.test(f.name) ||
     PROMO_LABEL.test(f.label || "") ||
     (Array.isArray(f.options) &&
@@ -65,11 +73,19 @@ export function freePromoValue(field) {
   if (!Array.isArray(field.options) || !field.options.length) {
     if (field.type === "checkbox" || typeof field.value === "boolean")
       return false;
+    // A hidden/pre-filled promo value with no visible choices cannot be
+    // safely switched off, so fail closed.
+    if (field.value !== undefined && field.value !== null && field.value !== "")
+      throw new Error(
+        `Jiji pre-filled the promotion "${field.label || field.name}" without a free choice. Nothing was prepared; finish this advert on Jiji.`,
+      );
     return null;
   }
   const free = field.options.find(
     (o) =>
-      FREE_OPTION.test(optionLabel(o)) && !PAID_OPTION.test(optionLabel(o)),
+      FREE_OPTION.test(optionLabel(o)) &&
+      !PAID_OPTION.test(optionLabel(o)) &&
+      optionCost(o) === 0,
   );
   if (!free)
     throw new Error(

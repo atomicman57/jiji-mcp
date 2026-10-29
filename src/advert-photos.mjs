@@ -1,19 +1,33 @@
-// Resolves advert photo sources on the companion machine. Local files are read
-// in place; URLs are downloaded once to a private temp file at prepare time so
-// confirm uploads exactly the bytes the owner previewed (checked by sha256).
+// Resolves advert photo sources on the companion machine. Local files must sit
+// inside an owner-chosen photo folder; URLs are downloaded once to a private
+// temp file at prepare time so confirm uploads exactly the bytes the owner
+// previewed (checked by sha256).
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
-import dns from "node:dns/promises";
+import https from "node:https";
+import dns from "node:dns";
 import { createHash, randomBytes } from "node:crypto";
 
 export const MAX_PHOTOS = 20;
 export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const TEMP_PREFIX = "jiji-advert-photo-";
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
-export function sniffImage(bytes) {
-  const b = bytes;
+// Folders agents may attach photos from. Set JIJI_ADVERT_PHOTO_DIRS (or
+// advertPhotoDirs in the companion config) to a path-delimited list.
+export function photoRoots(env = process.env, config = {}) {
+  const raw = env.JIJI_ADVERT_PHOTO_DIRS ?? config.advertPhotoDirs;
+  const list = Array.isArray(raw)
+    ? raw
+    : raw
+      ? String(raw).split(path.delimiter)
+      : [path.join(os.homedir(), "Pictures", "Jiji")];
+  return list.filter((d) => path.isAbsolute(d));
+}
+
+export function sniffImage(b) {
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff)
     return "image/jpeg";
   if (
@@ -51,32 +65,53 @@ export function displayUrl(value) {
   return u.origin + u.pathname;
 }
 
-function privateAddress(ip) {
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split(".").map(Number);
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      a >= 224
-    );
-  }
-  const v = ip.toLowerCase();
-  return (
-    v === "::1" ||
-    v === "::" ||
-    v.startsWith("fc") ||
-    v.startsWith("fd") ||
-    v.startsWith("fe80") ||
-    (v.startsWith("::ffff:") && privateAddress(v.slice(7)))
-  );
+// Special-purpose ranges. IPv4-mapped, NAT64 and 6to4 IPv6 forms are blocked
+// whole rather than unwrapped: public image hosts do not resolve to them.
+// Separate lists: Node maps IPv4 into ::ffff:0:0/96 when lists are mixed.
+const blocked4 = new net.BlockList();
+const blocked6 = new net.BlockList();
+for (const [a, p] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 3],
+])
+  blocked4.addSubnet(a, p, "ipv4");
+for (const [a, p] of [
+  ["::", 127],
+  ["::ffff:0:0", 96],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  ["100::", 64],
+  ["2001::", 23],
+  ["2001:db8::", 32],
+  ["2002::", 16],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["fec0::", 10],
+  ["ff00::", 8],
+])
+  blocked6.addSubnet(a, p, "ipv6");
+
+export function isPublicAddress(address) {
+  const family = net.isIP(address);
+  if (!family) return false;
+  return family === 4
+    ? !blocked4.check(address, "ipv4")
+    : !blocked6.check(address, "ipv6");
 }
 
-export async function assertPublicUrl(value, lookup = dns.lookup) {
+export function assertPublicUrl(value) {
   let u;
   try {
     u = new URL(value);
@@ -86,43 +121,92 @@ export async function assertPublicUrl(value, lookup = dns.lookup) {
   if (u.protocol !== "https:" || u.username || u.password)
     throw new Error("Photo URLs must be plain https:// links.");
   const host = u.hostname.replace(/^\[|\]$/g, "");
-  if (/^localhost$|\.local$|\.internal$/i.test(host))
+  if (/^localhost$|\.localhost$|\.local$|\.internal$/i.test(host))
     throw new Error("Photo URL must be a public host.");
-  const addresses = net.isIP(host)
-    ? [{ address: host }]
-    : await lookup(host, { all: true });
-  if (!addresses.length || addresses.some((a) => privateAddress(a.address)))
+  if (net.isIP(host) && !isPublicAddress(host))
     throw new Error("Photo URL must be a public host.");
   return u;
 }
 
-export async function downloadPhoto(
-  url,
-  { fetchImpl = fetch, lookup, tmpDir } = {},
-) {
-  let current = await assertPublicUrl(url, lookup);
+// DNS lookup that refuses non-public answers. Used as the connection's own
+// lookup, so the checked address is the one connected to (no rebinding gap).
+export function publicLookup(lookup = dns.lookup) {
+  return (hostname, options, callback) => {
+    lookup(hostname, { ...options, all: true }, (err, addresses) => {
+      if (err) return callback(err);
+      const list = Array.isArray(addresses) ? addresses : [];
+      if (!list.length || list.some((a) => !isPublicAddress(a.address)))
+        return callback(new Error("Photo URL must be a public host."));
+      if (options?.all) return callback(null, list);
+      callback(null, list[0].address, list[0].family);
+    });
+  };
+}
+
+// Minimal https GET pinned to publicLookup. Returns a fetch-like shape.
+function guardedGet(url, { lookup } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      { lookup: publicLookup(lookup), timeout: 20000 },
+      (res) =>
+        resolve({
+          status: res.statusCode,
+          headers: { get: (k) => res.headers[k.toLowerCase()] ?? null },
+          body: res,
+          cancel: () => res.destroy(),
+        }),
+    );
+    req.on("timeout", () =>
+      req.destroy(new Error("Photo download timed out.")),
+    );
+    req.on("error", (e) =>
+      reject(
+        /public host/.test(e.message)
+          ? e
+          : new Error("Photo URL could not be downloaded."),
+      ),
+    );
+  });
+}
+
+async function readCapped(body) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of body) {
+    size += chunk.length;
+    if (size > MAX_PHOTO_BYTES)
+      throw new Error("Photo at URL is larger than 10 MB.");
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+// `get(url)` may be injected in tests; it must return { status, headers.get, body }.
+export async function downloadPhoto(url, { get, lookup, tmpDir } = {}) {
+  const fetchOnce = get || ((u) => guardedGet(u, { lookup }));
+  let current = assertPublicUrl(url);
   let r;
   for (let hop = 0; ; hop++) {
-    r = await fetchImpl(current.href, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(20000),
-    });
+    r = await fetchOnce(current.href);
     if (r.status < 300 || r.status >= 400) break;
+    r.cancel?.();
     if (hop >= 3) throw new Error("Photo URL redirected too many times.");
-    current = await assertPublicUrl(
+    current = assertPublicUrl(
       new URL(r.headers.get("location") || "", current).href,
-      lookup,
     );
   }
-  if (!r.ok) throw new Error(`Photo URL returned HTTP ${r.status}.`);
-  const declared = Number(r.headers.get("content-length") || 0);
-  if (declared > MAX_PHOTO_BYTES)
+  if (r.status < 200 || r.status >= 300) {
+    r.cancel?.();
+    throw new Error(`Photo URL returned HTTP ${r.status}.`);
+  }
+  if (Number(r.headers.get("content-length") || 0) > MAX_PHOTO_BYTES) {
+    r.cancel?.();
     throw new Error("Photo at URL is larger than 10 MB.");
-  const bytes = Buffer.from(await r.arrayBuffer());
+  }
+  const bytes = await readCapped(r.body || []);
   const type = checkImage(bytes, displayUrl(url));
-  const dir = await fs.mkdtemp(
-    path.join(tmpDir || os.tmpdir(), "jiji-advert-photo-"),
-  );
+  const dir = await fs.mkdtemp(path.join(tmpDir || os.tmpdir(), TEMP_PREFIX));
   const file = path.join(dir, randomBytes(8).toString("hex") + "." + EXT[type]);
   await fs.writeFile(file, bytes, { mode: 0o600 });
   return {
@@ -136,14 +220,45 @@ export async function downloadPhoto(
   };
 }
 
-export async function readPhoto(file, expectedSha) {
-  if (typeof file !== "string" || !path.isAbsolute(file))
-    throw new Error("Photo paths must be absolute local file paths.");
-  const stat = await fs.stat(file).catch(() => null);
-  if (!stat?.isFile()) throw new Error(`Photo file not found: ${file}`);
-  if (stat.size > MAX_PHOTO_BYTES)
+const inside = (root, file) => {
+  const rel = path.relative(root, file);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel);
+};
+
+function ownTempFile(file, tmpDir = os.tmpdir()) {
+  const dir = path.dirname(file);
+  return (
+    path.dirname(dir) === path.resolve(tmpDir) &&
+    path.basename(dir).startsWith(TEMP_PREFIX)
+  );
+}
+
+// Reads a photo the agent may attach: a regular, non-symlink file inside an
+// allowed root (or a temp file this module downloaded). Errors do not reveal
+// whether a path outside the allowed folders exists.
+export async function readPhoto(
+  file,
+  { expectedSha, roots = [], downloaded, tmpDir } = {},
+) {
+  const denied = () =>
+    new Error(
+      "Photo is not available. Put advert photos in an allowed folder (JIJI_ADVERT_PHOTO_DIRS) and pass the absolute path.",
+    );
+  if (typeof file !== "string" || !path.isAbsolute(file)) throw denied();
+  const real = await fs.realpath(file).catch(() => null);
+  const lstat = await fs.lstat(file).catch(() => null);
+  if (!real || !lstat || lstat.isSymbolicLink() || !lstat.isFile())
+    throw denied();
+  const realRoots = await Promise.all(
+    roots.map((r) => fs.realpath(r).catch(() => null)),
+  );
+  const allowed =
+    (downloaded && ownTempFile(file, tmpDir)) ||
+    realRoots.some((root) => root && inside(root, real));
+  if (!allowed) throw denied();
+  if (lstat.size > MAX_PHOTO_BYTES)
     throw new Error(`Photo ${path.basename(file)} is larger than 10 MB.`);
-  const bytes = await fs.readFile(file);
+  const bytes = await fs.readFile(real);
   const type = checkImage(bytes, path.basename(file));
   const digest = sha256(bytes);
   if (expectedSha && digest !== expectedSha)
@@ -167,7 +282,12 @@ export async function resolvePhotos(photos, options = {}) {
     if (p.existing_id !== undefined) {
       out.push({ existing_id: String(p.existing_id) });
     } else if (p.path) {
-      const read = await readPhoto(p.path, p.sha256);
+      const read = await readPhoto(p.path, {
+        expectedSha: p.sha256,
+        roots: options.roots,
+        downloaded: p.downloaded,
+        tmpDir: options.tmpDir,
+      });
       out.push({
         path: p.path,
         name: path.basename(p.path),
@@ -184,15 +304,36 @@ export async function resolvePhotos(photos, options = {}) {
   return out;
 }
 
+// Agent input may only name a source; derived keys are stripped.
+export const photoSources = (photos) =>
+  photos?.map((p) =>
+    p.existing_id !== undefined
+      ? { existing_id: p.existing_id }
+      : p.path
+        ? { path: p.path }
+        : { url: p.url },
+  );
+
 // Removes only temp directories this module created for URL downloads.
 export async function removeDownloaded(photos, tmpDir = os.tmpdir()) {
-  for (const p of photos || []) {
-    const dir = p.downloaded && p.path ? path.dirname(p.path) : "";
-    if (
-      dir &&
-      path.dirname(dir) === path.resolve(tmpDir) &&
-      path.basename(dir).startsWith("jiji-advert-photo-")
-    )
+  for (const p of photos || [])
+    if (p.downloaded && p.path && ownTempFile(p.path, tmpDir))
+      await fs
+        .rm(path.dirname(p.path), { recursive: true, force: true })
+        .catch(() => {});
+}
+
+// Removes downloads older than a plan's lifetime (unconfirmed previews).
+export async function sweepDownloads(
+  maxAgeMs = 15 * 60000,
+  tmpDir = os.tmpdir(),
+) {
+  const entries = await fs.readdir(tmpDir).catch(() => []);
+  for (const name of entries) {
+    if (!name.startsWith(TEMP_PREFIX)) continue;
+    const dir = path.join(tmpDir, name);
+    const stat = await fs.lstat(dir).catch(() => null);
+    if (stat?.isDirectory() && Date.now() - stat.mtimeMs > maxAgeMs)
       await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }

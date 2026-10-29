@@ -16,6 +16,7 @@ import {
   resolveCategoryPath,
 } from "./advert-form.mjs";
 import {
+  photoRoots,
   readPhoto,
   removeDownloaded,
   resolvePhotos,
@@ -49,6 +50,7 @@ export class JijiBrowser {
     this.queue = Promise.resolve();
     this.lastRequest = 0;
     this.conversations = new Map();
+    this.photoOptions = { roots: photoRoots() };
   }
   run(fn) {
     const task = this.queue.then(fn);
@@ -874,7 +876,7 @@ export class JijiBrowser {
   }
   // Reads Jiji's live create/edit and category forms and builds the exact
   // submission plus a preview and payload hash. Sends nothing.
-  async prepareAdvert(parameters, photoOptions) {
+  async prepareAdvert(parameters, photoOptions = this.photoOptions) {
     validateUserData(parameters.fields);
     const editing = parameters.editing ?? Boolean(parameters.advert_id);
     const base = await this.readResource(
@@ -952,7 +954,11 @@ export class JijiBrowser {
   // Uploads one photo through the signed-in page (same-origin cookies) and
   // returns only Jiji's image id; URLs and signatures in the reply are dropped.
   async uploadAdvertPhoto(uploadPath, photo) {
-    const { bytes, type } = await readPhoto(photo.path, photo.sha256);
+    const { bytes, type } = await readPhoto(photo.path, {
+      ...this.photoOptions,
+      expectedSha: photo.sha256,
+      downloaded: photo.downloaded,
+    });
     const page = await this.jijiPage();
     const r = await page.evaluate(
       async ({ uploadPath, data, type, name }) => {
@@ -993,7 +999,22 @@ export class JijiBrowser {
   // Re-reads the live forms, refuses if the payload differs from the preview,
   // uploads new photos in order, then submits once with No promo (free).
   async executeAdvert(parameters, expectedHash) {
-    const current = await this.prepareAdvert(parameters);
+    try {
+      return await this.submitAdvert(parameters, expectedHash);
+    } finally {
+      await removeDownloaded(parameters.photos);
+    }
+  }
+  async submitAdvert(parameters, expectedHash) {
+    let current;
+    try {
+      current = await this.prepareAdvert(parameters);
+    } catch (e) {
+      throw Object.assign(
+        new Error(e.message + " Nothing was sent; prepare a fresh preview."),
+        { nothingSent: true },
+      );
+    }
     if (expectedHash !== undefined && current.payload_hash !== expectedHash)
       throw Object.assign(
         new Error(
@@ -1036,7 +1057,6 @@ export class JijiBrowser {
         r.error ||
           "Jiji rejected the advert submission. Review the form on Jiji before retrying.",
       );
-    await removeDownloaded(current.parameters.photos);
     return {
       submitted: true,
       action: current.preview.action,

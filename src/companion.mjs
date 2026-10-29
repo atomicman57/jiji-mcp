@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { JijiBrowser } from "./browser-driver.mjs";
 import { ApprovalPlans } from "./plans.mjs";
 import { confirmAdvert, prepareAdvertPlan } from "./advert-confirm.mjs";
+import { photoRoots, photoSources, sweepDownloads } from "./advert-photos.mjs";
 import { prepareMessageAction } from "./message-actions.mjs";
 import {
   createRelease,
@@ -44,6 +45,7 @@ const bindHost = loopbackBindHost(process.env.JIJI_BIND_HOST);
 const origin = `http://${bindHost}:${port}`;
 const settings = readSendSettings(process.env, config);
 const browser = new JijiBrowser(path.join(runtime, "browser-profile"));
+browser.photoOptions = { roots: photoRoots(process.env, config) };
 const plans = new ApprovalPlans();
 const sendLog = await openSendLog(path.join(runtime, "send-log.jsonl"));
 // The local Approve button, auto-approve, and jiji_send_prepared all use this.
@@ -117,7 +119,12 @@ async function action(m) {
     );
   }
   if (m.action === "prepare_advert") {
-    const p = await browser.run(() => browser.prepareAdvert(m.parameters));
+    await sweepDownloads();
+    const parameters = {
+      ...m.parameters,
+      photos: photoSources(m.parameters?.photos),
+    };
+    const p = await browser.run(() => browser.prepareAdvert(parameters));
     return publicPlan(prepareAdvertPlan(plans, p));
   }
   if (m.action === "confirm_advert")
