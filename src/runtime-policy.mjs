@@ -23,25 +23,65 @@ export function loopbackBindHost(value) {
 
 const PROXY_PROTOCOLS = new Set(["http:", "https:", "socks4:", "socks5:"]);
 
+// Whitespace-only userinfo (e.g. %20) counts as no credential.
 function decodePart(value) {
+  let decoded;
   try {
-    return decodeURIComponent(value);
+    decoded = decodeURIComponent(value);
   } catch {
     throw new Error("JIJI_BROWSER_PROXY has malformed credentials.");
   }
+  return decoded.trim() ? decoded : "";
+}
+
+function envPart(value) {
+  return defined(value) ? String(value) : "";
+}
+
+// WHATWG URL drops default ports (https:443, http:80) from url.port, so the
+// explicit port is read from the raw authority instead.
+function explicitPort(raw) {
+  const start = raw.indexOf("://");
+  if (start < 0) return "";
+  const rest = raw.slice(start + 3);
+  const end = rest.search(/[/?#]/);
+  const authority = end < 0 ? rest : rest.slice(0, end);
+  const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
+  let port;
+  if (hostPort.startsWith("[")) {
+    const close = hostPort.indexOf("]");
+    if (close < 0) return "";
+    const after = hostPort.slice(close + 1);
+    if (!after.startsWith(":")) return "";
+    port = after.slice(1);
+  } else {
+    const colon = hostPort.lastIndexOf(":");
+    if (colon < 0) return "";
+    port = hostPort.slice(colon + 1);
+  }
+  return /^\d+$/.test(port) ? port : "";
 }
 
 const SOCKS_PROTOCOLS = new Set(["socks4:", "socks5:"]);
+
+const BYPASS_ERROR =
+  "JIJI_BROWSER_PROXY_BYPASS must be a comma-separated host list with no empty entries.";
 
 // Browser egress only; the relay connection, photo downloads and push fetches
 // do not use this proxy. Credentials come from exactly one source: the URL
 // userinfo or JIJI_BROWSER_PROXY_USERNAME / JIJI_BROWSER_PROXY_PASSWORD.
 // Errors are fixed strings and never echo the value, which may carry credentials.
 export function browserProxy(env = {}) {
-  if (!defined(env.JIJI_BROWSER_PROXY)) return undefined;
+  const hasBypass = defined(env.JIJI_BROWSER_PROXY_BYPASS);
+  if (!defined(env.JIJI_BROWSER_PROXY)) {
+    if (hasBypass)
+      throw new Error("JIJI_BROWSER_PROXY_BYPASS requires JIJI_BROWSER_PROXY.");
+    return undefined;
+  }
+  const raw = String(env.JIJI_BROWSER_PROXY).trim();
   let url;
   try {
-    url = new URL(String(env.JIJI_BROWSER_PROXY).trim());
+    url = new URL(raw);
   } catch {
     throw new Error("JIJI_BROWSER_PROXY must be a URL like https://host:port.");
   }
@@ -55,26 +95,21 @@ export function browserProxy(env = {}) {
     throw new Error(
       "JIJI_BROWSER_PROXY must be an http, https, socks4 or socks5 URL with only a host and port.",
     );
-  if (!url.port)
+  const port = explicitPort(raw);
+  if (!port)
     throw new Error("JIJI_BROWSER_PROXY must include an explicit port.");
-  const urlHasCredentials = Boolean(url.username || url.password);
-  const envHasCredentials =
-    defined(env.JIJI_BROWSER_PROXY_USERNAME) ||
-    defined(env.JIJI_BROWSER_PROXY_PASSWORD);
+  const urlUsername = decodePart(url.username);
+  const urlPassword = decodePart(url.password);
+  const envUsername = envPart(env.JIJI_BROWSER_PROXY_USERNAME);
+  const envPassword = envPart(env.JIJI_BROWSER_PROXY_PASSWORD);
+  const urlHasCredentials = Boolean(urlUsername || urlPassword);
+  const envHasCredentials = Boolean(envUsername || envPassword);
   if (urlHasCredentials && envHasCredentials)
     throw new Error(
       "JIJI_BROWSER_PROXY credentials must come from the URL or from JIJI_BROWSER_PROXY_USERNAME/PASSWORD, not both.",
     );
-  const username = envHasCredentials
-    ? defined(env.JIJI_BROWSER_PROXY_USERNAME)
-      ? String(env.JIJI_BROWSER_PROXY_USERNAME)
-      : ""
-    : decodePart(url.username);
-  const password = envHasCredentials
-    ? defined(env.JIJI_BROWSER_PROXY_PASSWORD)
-      ? String(env.JIJI_BROWSER_PROXY_PASSWORD)
-      : ""
-    : decodePart(url.password);
+  const username = envHasCredentials ? envUsername : urlUsername;
+  const password = envHasCredentials ? envPassword : urlPassword;
   if (Boolean(username) !== Boolean(password))
     throw new Error(
       "JIJI_BROWSER_PROXY username and password must both be set or both be empty.",
@@ -83,13 +118,25 @@ export function browserProxy(env = {}) {
     throw new Error(
       "JIJI_BROWSER_PROXY socks proxies do not support credentials.",
     );
-  const proxy = { server: url.protocol + "//" + url.host };
+  const host =
+    url.hostname.includes(":") && !url.hostname.startsWith("[")
+      ? "[" + url.hostname + "]"
+      : url.hostname;
+  const proxy = {
+    server:
+      url.protocol + "//" + host + ":" + (url.port || String(Number(port))),
+  };
   if (username) {
     proxy.username = username;
     proxy.password = password;
   }
-  if (defined(env.JIJI_BROWSER_PROXY_BYPASS))
-    proxy.bypass = String(env.JIJI_BROWSER_PROXY_BYPASS).trim();
+  if (hasBypass) {
+    const hosts = String(env.JIJI_BROWSER_PROXY_BYPASS)
+      .split(",")
+      .map((entry) => entry.trim());
+    if (hosts.some((entry) => !entry)) throw new Error(BYPASS_ERROR);
+    proxy.bypass = hosts.join(",");
+  }
   return proxy;
 }
 
