@@ -66,7 +66,7 @@ test("seller research, contacts, inbox and message preparation route without sen
   };
   try {
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 23);
+    assert.equal(tools.length, 24);
     assert.ok(!tools.some((t) => /approve|send_message/.test(t.name)));
     assert.equal(
       (await call("jiji_market_prices", { query: "router" })).median,
