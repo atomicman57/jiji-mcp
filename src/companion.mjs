@@ -46,6 +46,8 @@ const bindHost = loopbackBindHost(process.env.JIJI_BIND_HOST);
 const origin = `http://${bindHost}:${port}`;
 const settings = readSendSettings(process.env, config);
 const browser = new JijiBrowser(path.join(runtime, "browser-profile"));
+// Last line of defence: no proxy credential leaves through an error or reply.
+const scrub = (value) => browser.scrub(value);
 browser.photoOptions = { roots: photoRoots(process.env, config) };
 const plans = new ApprovalPlans();
 const sendLog = await openSendLog(path.join(runtime, "send-log.jsonl"));
@@ -75,6 +77,11 @@ const session = randomBytes(32).toString("hex"),
   csrf = randomBytes(32).toString("hex");
 const escape = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+// Cloud jobs report only error.message; keep proxy credentials out of it.
+const scrubbedAction = (m) =>
+  action(m).catch((e) => {
+    throw new Error(scrub(e?.message));
+  });
 const publicPlan = (p) => ({ ...p, approval_url: `${origin}/approve/${p.id}` });
 async function action(m) {
   if (m.action === "status")
@@ -185,7 +192,7 @@ async function startCloud() {
           origin: config.cloudOrigin,
           identity,
           signal,
-          action,
+          action: scrubbedAction,
           onConnected: () => {
             cloudConnected = true;
             cloudError = "";
@@ -195,7 +202,7 @@ async function startCloud() {
       } catch (e) {
         if (signal.aborted) break;
         cloudConnected = false;
-        cloudError = e.message;
+        cloudError = scrub(e.message);
         if (e.code === "COMPANION_REPLACED") break;
         const delay = Math.min(30000, 1000 * 2 ** Math.min(failures++, 5));
         await new Promise((resolve) => {
@@ -210,7 +217,7 @@ async function startCloud() {
       }
     }
   } catch (e) {
-    if (e.name !== "AbortError") cloudError = e.message;
+    if (e.name !== "AbortError") cloudError = scrub(e.message);
   } finally {
     cloudConnected = false;
     cloudAbort = null;
@@ -351,7 +358,7 @@ const web = http.createServer(async (req, res) => {
       );
     return send(res, { error: "Not found" }, 404);
   } catch (e) {
-    send(res, { error: e.message }, 400);
+    send(res, { error: scrub(e.message) }, 400);
   }
 });
 await new Promise((resolve, reject) => {
@@ -389,7 +396,7 @@ const server = net.createServer({ allowHalfOpen: true }, (client) => {
       const result = await action(JSON.parse(raw));
       client.end(JSON.stringify(result) + "\n");
     } catch (e) {
-      client.end(JSON.stringify({ error: e.message }) + "\n");
+      client.end(JSON.stringify({ error: scrub(e.message) }) + "\n");
     }
   });
 });

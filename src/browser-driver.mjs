@@ -2,7 +2,11 @@ import { chromium } from "playwright";
 import fs from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { validatePath, listingUrl, chatUrl } from "./protocol.mjs";
-import { browserLaunchOptions } from "./runtime-policy.mjs";
+import {
+  browserLaunchOptions,
+  browserProxyList,
+  scrubProxySecrets,
+} from "./runtime-policy.mjs";
 import {
   buildRead,
   buildAction,
@@ -43,15 +47,89 @@ export function photoUploadPath(params = {}) {
   );
 }
 
+const BROWSER_LAUNCH_FAILED = "browser launch failed (check proxy config)";
+const PROXY_NAVIGATION_FAILED =
+  "Jiji navigation failed through the browser proxy.";
+const HOME = "https://jiji.ng/";
+const NAVIGATION = { waitUntil: "domcontentloaded", timeout: 30000 };
+
+// Only consulted while a proxy is in use, so a navigation timeout counts as a
+// proxy failure there. Chrome reports a proxy's 407 as
+// ERR_HTTP_RESPONSE_CODE_FAILURE, usually without "407" or "proxy" in the text.
+export function isProxyFailure(error) {
+  if (error?.status === 407 || error?.name === "TimeoutError") return true;
+  const message = String(error?.message || "");
+  return (
+    /ERR_PROXY|ERR_TUNNEL_CONNECTION_FAILED|ERR_HTTP_RESPONSE_CODE_FAILURE|proxy/i.test(
+      message,
+    ) ||
+    /\b407\b/.test(message) ||
+    /Timeout \d+ms exceeded/.test(message)
+  );
+}
+
+// A Cloudflare block on the proxy's egress IP: a 403 marked
+// `cf-mitigated: challenge`, or the challenge page itself served as
+// 403/429/503. An ordinary Jiji error page is not a challenge.
+export function isCloudflareChallenge({
+  status,
+  headers = {},
+  title = "",
+  body = "",
+} = {}) {
+  if (![403, 429, 503].includes(status)) return false;
+  const mitigated = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === "cf-mitigated",
+  );
+  if (status === 403 && /^\s*challenge\s*$/i.test(String(mitigated?.[1] || "")))
+    return true;
+  return (
+    /^\s*(Just a moment|Attention Required|Verify you are human)\b/i.test(
+      title,
+    ) || /\bcf-browser-verification\b/.test(body)
+  );
+}
+
+// Challenge pages are served as 403/429/503; other responses are never read.
+async function challenged(page, response) {
+  const status = response?.status?.();
+  if (![403, 429, 503].includes(status)) return false;
+  const [title, body] = await Promise.all([
+    page.title().catch(() => ""),
+    response.text().catch(() => ""),
+  ]);
+  return isCloudflareChallenge({
+    status,
+    headers: response.headers?.() || {},
+    title,
+    body,
+  });
+}
+
+class ProxyRejected extends Error {}
+
 export class JijiBrowser {
   constructor(profile) {
     this.profile = profile;
     this.context = null;
     this.page = null;
+    this.proxies = null;
+    this.lastError = null;
+    this.activeProxyIndex = null;
     this.queue = Promise.resolve();
     this.lastRequest = 0;
     this.conversations = new Map();
     this.photoOptions = { roots: photoRoots() };
+  }
+  // Status text is scrubbed on the way in, so a dirty string never sticks.
+  get lastError() {
+    return this.storedError;
+  }
+  set lastError(value) {
+    this.storedError = value == null ? null : this.scrub(String(value));
+  }
+  scrub(value) {
+    return scrubProxySecrets(value, this.proxies || [], process.env);
   }
   run(fn) {
     const task = this.queue.then(fn);
@@ -66,29 +144,96 @@ export class JijiBrowser {
         this.page = existing;
         return existing;
       }
-      this.page = await this.context.newPage();
-      await this.page.goto("https://jiji.ng/", {
-        waitUntil: "domcontentloaded",
-        timeout: 30000,
-      });
+      try {
+        this.page = await this.context.newPage();
+        await this.page.goto(HOME, NAVIGATION);
+      } catch (error) {
+        if (this.canFailOver(error)) return this.failOver();
+        throw await this.startupFailed(error);
+      }
+      this.lastError = null;
       return this.page;
     }
     await fs.mkdir(this.profile, { recursive: true, mode: 0o700 });
     await fs.chmod(this.profile, 0o700);
-    this.context = await chromium.launchPersistentContext(
-      this.profile,
-      browserLaunchOptions(process.env),
+    // Config errors are fixed strings and pass through. Every entry is
+    // validated before the first launch.
+    this.proxies = browserProxyList(process.env);
+    return this.launchFrom(0);
+  }
+  // Tries each proxy from `start` in order (or direct egress when none are
+  // configured). Proxy-class errors and Cloudflare challenges advance to the
+  // next entry; anything else, or running out of entries, is a launch failure.
+  async launchFrom(start) {
+    const proxies = this.proxies?.length ? this.proxies : [null];
+    for (let index = start; index < proxies.length; index++) {
+      const proxy = proxies[index];
+      const options = browserLaunchOptions(process.env, proxy);
+      try {
+        this.context = await chromium.launchPersistentContext(
+          this.profile,
+          options,
+        );
+        const context = this.context;
+        context.on("close", () => {
+          if (this.context !== context) return;
+          this.context = null;
+          this.page = null;
+        });
+        this.page = context.pages()[0] || (await context.newPage());
+        const response = await this.page.goto(HOME, NAVIGATION);
+        if (proxy && (await challenged(this.page, response)))
+          throw new ProxyRejected("challenge");
+      } catch (error) {
+        const proxyFailed =
+          proxy && (error instanceof ProxyRejected || isProxyFailure(error));
+        if (proxyFailed && index + 1 < proxies.length) {
+          console.error(
+            "browser proxy entry " + (index + 1) + " failed; trying the next",
+          );
+          await this.closeContext();
+          continue;
+        }
+        throw await this.startupFailed(error);
+      }
+      this.activeProxyIndex = proxy ? index : null;
+      this.lastError = null;
+      return this.page;
+    }
+  }
+  canFailOver(error) {
+    return (
+      this.activeProxyIndex !== null &&
+      this.activeProxyIndex + 1 < (this.proxies?.length || 0) &&
+      isProxyFailure(error)
     );
-    this.context.on("close", () => {
-      this.context = null;
-      this.page = null;
-    });
-    this.page = this.context.pages()[0] || (await this.context.newPage());
-    await this.page.goto("https://jiji.ng/", {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-    return this.page;
+  }
+  // Mid-run: one pass over the entries after the failing one, no wrap-around.
+  async failOver() {
+    console.error(
+      "browser proxy entry " +
+        (this.activeProxyIndex + 1) +
+        " failed; trying the next",
+    );
+    const next = this.activeProxyIndex + 1;
+    await this.closeContext();
+    return this.launchFrom(next);
+  }
+  async closeContext() {
+    const context = this.context;
+    this.context = null;
+    this.page = null;
+    this.activeProxyIndex = null;
+    await context?.close().catch(() => {});
+  }
+  // Playwright launch and navigation messages can echo the proxy server or
+  // credentials, so only the error name is logged, the half-open browser is
+  // closed, and a fixed message reaches status/sockets.
+  async startupFailed(error) {
+    console.error("browser launch failed: " + (error?.name || "Error"));
+    await this.closeContext();
+    this.lastError = BROWSER_LAUNCH_FAILED;
+    return new Error(BROWSER_LAUNCH_FAILED);
   }
   async jijiPage() {
     const page = await this.open();
@@ -99,6 +244,9 @@ export class JijiBrowser {
     return page;
   }
   async status() {
+    return this.scrub(await this.readStatus());
+  }
+  async readStatus() {
     if (!this.context || !this.page || this.page.isClosed())
       return {
         connected: true,
@@ -106,6 +254,7 @@ export class JijiBrowser {
         signed_in: false,
         login_required: true,
         extension_required: false,
+        ...(this.lastError && { last_error: this.lastError }),
       };
     const page = this.page;
     if (new URL(page.url()).origin !== "https://jiji.ng")
@@ -115,6 +264,7 @@ export class JijiBrowser {
         signed_in: false,
         login_in_progress: true,
         extension_required: false,
+        ...this.proxyStatus(),
         message:
           "Complete the sign-in provider flow in the browser. It will not be interrupted.",
       };
@@ -128,17 +278,24 @@ export class JijiBrowser {
       signed_in: signedIn,
       login_required: !signedIn,
       extension_required: false,
+      ...this.proxyStatus(),
       url: new URL(page.url()).origin,
       message: signedIn
         ? "Jiji account controls are visible in the browser."
         : "Complete login directly in the Jiji browser window.",
     };
   }
+  // Entry index (0-based) and host:port only; never credentials.
+  proxyStatus() {
+    if (this.activeProxyIndex === null) return {};
+    return {
+      proxy_index: this.activeProxyIndex,
+      proxy: this.proxies[this.activeProxyIndex].display,
+    };
+  }
   async login() {
-    const p = await this.open();
-    await p.goto("https://jiji.ng/login.html", {
-      waitUntil: "domcontentloaded",
-    });
+    // The page may be mid sign-in on another origin, so not jijiPage().
+    const p = await this.navigate("/login.html", () => this.open());
     await p.bringToFront();
     return {
       opened: true,
@@ -279,12 +436,41 @@ export class JijiBrowser {
     }, path);
   }
   async go(path) {
-    const page = await this.jijiPage();
-    await page.goto("https://jiji.ng" + path, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
+    return this.navigate(path, () => this.jijiPage());
+  }
+  // While a proxy is active a failed navigation never surfaces Playwright's
+  // text, which can echo the proxy URL. A proxy-class failure moves to the
+  // next proxy and retries once; anything else is the fixed error.
+  async navigate(path, acquire) {
+    let page = await acquire();
+    try {
+      await page.goto("https://jiji.ng" + path, NAVIGATION);
+    } catch (error) {
+      if (this.activeProxyIndex === null) throw error;
+      if (!this.canFailOver(error)) throw new Error(PROXY_NAVIGATION_FAILED);
+      await this.failOver();
+      page = await acquire();
+      try {
+        await page.goto("https://jiji.ng" + path, NAVIGATION);
+      } catch {
+        throw new Error(PROXY_NAVIGATION_FAILED);
+      }
+    }
     return page;
+  }
+  // Runs Playwright steps that navigate or wait on navigation. While a proxy
+  // is active their messages can echo the proxy URL with credentials, so any
+  // failure becomes the fixed error. A failed `navigation` is flagged when
+  // another proxy could help; callers decide whether retrying is safe.
+  async proxied(fn, navigation = false) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (this.activeProxyIndex === null) throw error;
+      throw Object.assign(new Error(PROXY_NAVIGATION_FAILED), {
+        canFailOver: navigation && this.canFailOver(error),
+      });
+    }
   }
   async inbox() {
     const page = await this.go("/profile-messages");
@@ -334,37 +520,52 @@ export class JijiBrowser {
       throw new Error(
         "Conversation reference expired. List conversations again.",
       );
+    // Opening a room only reads it, so a proxy-class failure fails over and
+    // retries once.
+    try {
+      return await this.enterConversation(item);
+    } catch (error) {
+      if (!error?.canFailOver) throw error;
+      await this.failOver();
+      return this.enterConversation(item);
+    }
+  }
+  async enterConversation(item) {
     const page = await this.go("/profile-messages");
-    await page
-      .locator(".qa-room-label-link")
-      .first()
-      .waitFor({ timeout: 12000 });
-    const matches = await page.locator(".qa-room-label-link").evaluateAll(
-      (rows, item) =>
-        rows
-          .map((row, index) => ({
-            index,
-            seller: row
-              .querySelector(".qa-room-label-link-name")
-              ?.textContent?.trim(),
-            title: row
-              .querySelector(".qa-room-label-link-title")
-              ?.textContent?.trim(),
-          }))
-          .filter(
-            (row) => row.seller === item.seller && row.title === item.title,
-          ),
-      item,
-    );
+    const matches = await this.proxied(async () => {
+      await page
+        .locator(".qa-room-label-link")
+        .first()
+        .waitFor({ timeout: 12000 });
+      return page.locator(".qa-room-label-link").evaluateAll(
+        (rows, item) =>
+          rows
+            .map((row, index) => ({
+              index,
+              seller: row
+                .querySelector(".qa-room-label-link-name")
+                ?.textContent?.trim(),
+              title: row
+                .querySelector(".qa-room-label-link-title")
+                ?.textContent?.trim(),
+            }))
+            .filter(
+              (row) => row.seller === item.seller && row.title === item.title,
+            ),
+        item,
+      );
+    });
     if (matches.length !== 1)
       throw new Error("Conversation could not be identified uniquely.");
-    await page.locator(".qa-room-label-link").nth(matches[0].index).click();
-    await page
-      .locator(".qa-messenger-send-message-textarea")
-      .waitFor({ timeout: 12000 });
-    await page.waitForURL((url) => Boolean(chatUrl(url.href)), {
-      timeout: 12000,
-    });
+    await this.proxied(async () => {
+      await page.locator(".qa-room-label-link").nth(matches[0].index).click();
+      await page
+        .locator(".qa-messenger-send-message-textarea")
+        .waitFor({ timeout: 12000 });
+      await page.waitForURL((url) => Boolean(chatUrl(url.href)), {
+        timeout: 12000,
+      });
+    }, true);
     return { page, item };
   }
   async conversation(key) {
@@ -607,26 +808,30 @@ export class JijiBrowser {
           "Jiji accepted the approved native offer. Delivery/read status is not established.",
       };
     }
-    const before = await page
-      .locator(".b-messenger-room-message-owner .qa-message-text")
-      .count();
-    await editor.fill(plan.message);
-    await editor.press("Enter");
-    await page.waitForFunction(
-      ({ before, text }) => {
-        const all = [
-          ...document.querySelectorAll(
-            ".b-messenger-room-message-owner .qa-message-text",
-          ),
-        ];
-        return (
-          all.length > before &&
-          all.some((e) => e.textContent.trim() === text.trim())
-        );
-      },
-      { before, text: plan.message },
-      { timeout: 10000 },
-    );
+    // From here the message may already be out, so failures are never retried
+    // through another proxy; the plan becomes uncertain.
+    await this.proxied(async () => {
+      const before = await page
+        .locator(".b-messenger-room-message-owner .qa-message-text")
+        .count();
+      await editor.fill(plan.message);
+      await editor.press("Enter");
+      await page.waitForFunction(
+        ({ before, text }) => {
+          const all = [
+            ...document.querySelectorAll(
+              ".b-messenger-room-message-owner .qa-message-text",
+            ),
+          ];
+          return (
+            all.length > before &&
+            all.some((e) => e.textContent.trim() === text.trim())
+          );
+        },
+        { before, text: plan.message },
+        { timeout: 10000 },
+      );
+    });
     return {
       sent: true,
       delivery_verified: false,
@@ -650,104 +855,106 @@ export class JijiBrowser {
     const pause = Math.max(0, 1200 - (Date.now() - this.lastRequest));
     if (pause) await new Promise((r) => setTimeout(r, pause));
     this.lastRequest = Date.now();
-    return page.evaluate(
-      async ({ path, method, body, ownerContacts }) => {
-        try {
-          if (location.origin !== "https://jiji.ng")
-            return { error: "Complete Jiji login in the browser." };
-          const r = await fetch(path, {
-            method,
-            credentials: "include",
-            redirect: "error",
-            headers: {
-              "X-Requested-With": "XMLHttpRequest",
-              ...(method !== "GET"
-                ? { "Content-Type": "application/json" }
-                : {}),
-            },
-            ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
-            signal: AbortSignal.timeout(20000),
-          });
-          if (!r.ok) return { status: r.status };
-          if (r.status === 204) return { status: r.status, body: {} };
-          if (!r.headers.get("content-type")?.includes("application/json"))
+    return this.proxied(() =>
+      page.evaluate(
+        async ({ path, method, body, ownerContacts }) => {
+          try {
+            if (location.origin !== "https://jiji.ng")
+              return { error: "Complete Jiji login in the browser." };
+            const r = await fetch(path, {
+              method,
+              credentials: "include",
+              redirect: "error",
+              headers: {
+                "X-Requested-With": "XMLHttpRequest",
+                ...(method !== "GET"
+                  ? { "Content-Type": "application/json" }
+                  : {}),
+              },
+              ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
+              signal: AbortSignal.timeout(20000),
+            });
+            if (!r.ok) return { status: r.status };
+            if (r.status === 204) return { status: r.status, body: {} };
+            if (!r.headers.get("content-type")?.includes("application/json"))
+              return {
+                error:
+                  "Jiji returned HTML or a challenge. Continue on Jiji; no retry was attempted.",
+              };
+            const text = await r.text();
+            if (text.length > 6 * 1024 * 1024)
+              return { error: "Response too large." };
+            const contactField = (name) =>
+              /(^|_)(phones?|mobile|whatsapp|e_?mail)(_(numbers?|address|formatted|raw))?$/.test(
+                name.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase(),
+              );
+            const clean = (value, depth = 0) => {
+              if (depth > 18) return null;
+              if (Array.isArray(value))
+                return value.slice(0, 60).map((v) => clean(v, depth + 1));
+              if (value && typeof value === "object") {
+                if (
+                  typeof value.name === "string" &&
+                  /password|otp|csrf|auth.?token|verification.?code/i.test(
+                    value.name,
+                  )
+                )
+                  return { name: value.name, owner_only: true };
+                if (
+                  !ownerContacts &&
+                  typeof value.name === "string" &&
+                  contactField(value.name)
+                )
+                  return { name: value.name, selected_contact_required: true };
+                return Object.fromEntries(
+                  Object.entries(value)
+                    .filter(
+                      ([k, v]) =>
+                        (ownerContacts ||
+                          typeof v === "boolean" ||
+                          !contactField(k)) &&
+                        !/password|csrf|cookie|authorization|token|secret|session|passkey|webauthn|challenge|otp|credential|private.?key|signed.?url|upload.?url/i.test(
+                          k,
+                        ),
+                    )
+                    .map(([k, v]) => [k, clean(v, depth + 1)]),
+                );
+              }
+              if (typeof value === "string") {
+                if (
+                  !ownerContacts &&
+                  /^(?:tel:|whatsapp:|https?:\/\/(?:wa\.me\/|(?:api\.|web\.)?whatsapp\.com\/send\?))/i.test(
+                    value,
+                  )
+                )
+                  return "[selected contact required]";
+                if (/^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(value))
+                  return "[credential omitted]";
+                if (/^https?:\/\//.test(value)) {
+                  try {
+                    const u = new URL(value);
+                    if (
+                      [...u.searchParams.keys()].some((k) =>
+                        /token|signature|secret|x-amz-/i.test(k),
+                      )
+                    )
+                      return u.origin + u.pathname;
+                  } catch {}
+                }
+                return value.slice(0, 12000);
+              }
+              return value;
+            };
+            return { status: r.status, body: clean(JSON.parse(text)) };
+          } catch {
             return {
               error:
-                "Jiji returned HTML or a challenge. Continue on Jiji; no retry was attempted.",
+                "Jiji request did not complete. Do not retry a write automatically; check its status on Jiji.",
             };
-          const text = await r.text();
-          if (text.length > 6 * 1024 * 1024)
-            return { error: "Response too large." };
-          const contactField = (name) =>
-            /(^|_)(phones?|mobile|whatsapp|e_?mail)(_(numbers?|address|formatted|raw))?$/.test(
-              name.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase(),
-            );
-          const clean = (value, depth = 0) => {
-            if (depth > 18) return null;
-            if (Array.isArray(value))
-              return value.slice(0, 60).map((v) => clean(v, depth + 1));
-            if (value && typeof value === "object") {
-              if (
-                typeof value.name === "string" &&
-                /password|otp|csrf|auth.?token|verification.?code/i.test(
-                  value.name,
-                )
-              )
-                return { name: value.name, owner_only: true };
-              if (
-                !ownerContacts &&
-                typeof value.name === "string" &&
-                contactField(value.name)
-              )
-                return { name: value.name, selected_contact_required: true };
-              return Object.fromEntries(
-                Object.entries(value)
-                  .filter(
-                    ([k, v]) =>
-                      (ownerContacts ||
-                        typeof v === "boolean" ||
-                        !contactField(k)) &&
-                      !/password|csrf|cookie|authorization|token|secret|session|passkey|webauthn|challenge|otp|credential|private.?key|signed.?url|upload.?url/i.test(
-                        k,
-                      ),
-                  )
-                  .map(([k, v]) => [k, clean(v, depth + 1)]),
-              );
-            }
-            if (typeof value === "string") {
-              if (
-                !ownerContacts &&
-                /^(?:tel:|whatsapp:|https?:\/\/(?:wa\.me\/|(?:api\.|web\.)?whatsapp\.com\/send\?))/i.test(
-                  value,
-                )
-              )
-                return "[selected contact required]";
-              if (/^eyJ[\w-]+\.[\w-]+\.[\w-]+$/.test(value))
-                return "[credential omitted]";
-              if (/^https?:\/\//.test(value)) {
-                try {
-                  const u = new URL(value);
-                  if (
-                    [...u.searchParams.keys()].some((k) =>
-                      /token|signature|secret|x-amz-/i.test(k),
-                    )
-                  )
-                    return u.origin + u.pathname;
-                } catch {}
-              }
-              return value.slice(0, 12000);
-            }
-            return value;
-          };
-          return { status: r.status, body: clean(JSON.parse(text)) };
-        } catch {
-          return {
-            error:
-              "Jiji request did not complete. Do not retry a write automatically; check its status on Jiji.",
-          };
-        }
-      },
-      { path: u.pathname + u.search, method, body, ownerContacts },
+          }
+        },
+        { path: u.pathname + u.search, method, body, ownerContacts },
+      ),
     );
   }
   async readResource(name, parameters) {
