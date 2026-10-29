@@ -1286,3 +1286,30 @@ test("ad status pairing survives a restart; bad entries are dropped on load", as
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("stop during pagination reads no further page", async (t) => {
+  let release;
+  let entered;
+  const reached = new Promise((r) => (entered = r));
+  const h = await harness(t, {
+    responses: {
+      chat_rooms: (p) => {
+        if (p.page) return ok({ status: "ok", results: [room(p.page, 1)] });
+        entered();
+        return new Promise((r) => (release = r));
+      },
+      notifications: ok({ notifications: [] }),
+      my_adverts: ok({ adverts: [] }),
+    },
+  });
+  const ticking = h.push.tick();
+  await reached;
+  const stopping = h.push.stop();
+  release(ok({ status: "ok", results: [room(1, 10)], has_more: true }));
+  await stopping;
+  assert.deepEqual(await ticking, { skipped: "stopped" });
+  assert.deepEqual(
+    h.browser.calls.map((c) => [c.name, c.parameters.page]),
+    [["chat_rooms", undefined]],
+  );
+});

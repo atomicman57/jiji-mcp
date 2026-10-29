@@ -1062,7 +1062,12 @@ export function detectEvents(state, reads, now) {
 
 // Each source fails independently: a failed read returns null and keeps the
 // stored state for that source. Only PUSH_READS go through the browser.
-export async function pollJiji(browser, log = consoleLog) {
+// Once isClosed() is true no further page is read.
+export async function pollJiji(
+  browser,
+  log = consoleLog,
+  { isClosed = () => false } = {},
+) {
   const get = async (name, parameters = {}) => {
     if (!PUSH_READS.includes(name)) throw new Error("Not a push read.");
     const r = await browser.readResource(name, parameters);
@@ -1093,6 +1098,7 @@ export async function pollJiji(browser, log = consoleLog) {
       const all = [];
       const ids = new Set();
       for (let page = 1; page <= MAX_PUSH_PAGES; page++) {
+        if (isClosed()) return page === 1 ? null : all;
         const body = await get(name, page === 1 ? {} : { page });
         const rows = body && rowsOf(body);
         if (!rows) return page === 1 ? null : all;
@@ -1200,7 +1206,7 @@ export async function startPushNotifications({
       reads = await browser.run(async () => {
         const status = await browser.status();
         if (status.browser_open && !status.signed_in) return null;
-        return pollJiji(browser, log);
+        return pollJiji(browser, log, { isClosed: () => closed });
       });
     } catch (e) {
       log("warn", "push poll skipped; browser error", safeErrorFields(e));
