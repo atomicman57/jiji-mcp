@@ -882,7 +882,9 @@ function adOutcome(text) {
 }
 
 // Drops an ad_status alert whose counterpart from the other source was sent
-// recently, consuming that record so it pairs once. Otherwise records it.
+// recently, consuming that record so it pairs once. Otherwise records it and
+// forgets that advert's records with a different known outcome, so a stale
+// earlier cycle never swallows an alert from a later one.
 function pairAdStatus(recent, event, outcome, now) {
   const advert = event.data.advert_id;
   for (const [key, r] of Object.entries(recent)) {
@@ -894,6 +896,10 @@ function pairAdStatus(recent, event, outcome, now) {
     delete recent[key];
     return false;
   }
+  if (outcome !== null)
+    for (const [key, r] of Object.entries(recent))
+      if (r.advert === advert && r.outcome !== null && r.outcome !== outcome)
+        delete recent[key];
   recent[event.event_id] = { advert, via: event.data.via, outcome, at: now };
   return true;
 }
@@ -1036,10 +1042,12 @@ export function detectEvents(state, reads, now) {
     e.type === "ad_status" && e.data.via === via && e.data.advert_id;
   const dropped = new Set();
   const changed = new Set();
-  for (const e of events.filter((e) => isAd(e, "my_adverts"))) {
-    changed.add(e.data.advert_id);
-    if (!pairAdStatus(recent, e, adOutcome(e.data.to), now)) dropped.add(e);
-  }
+  // Only a kept transition hides same-poll notifications; a dropped one is
+  // itself a repeat and must not hide a different notification.
+  for (const e of events.filter((e) => isAd(e, "my_adverts")))
+    if (pairAdStatus(recent, e, adOutcome(e.data.to), now))
+      changed.add(e.data.advert_id);
+    else dropped.add(e);
   for (const e of events.filter((e) => isAd(e, "notifications")))
     if (
       changed.has(e.data.advert_id) ||

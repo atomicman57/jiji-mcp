@@ -1240,6 +1240,46 @@ test("a recorded approval does not hide a later rejection or a later approval", 
   ]);
 });
 
+const decline = (id) =>
+  approval(id, { type: "advert_declined", text: "Your ad was declined" });
+
+test("a rejection clears a stale my_adverts approval so a later approval notification alerts", () => {
+  const { ids } = polls([
+    { notifications: [], adverts: [car("on_review")] },
+    { notifications: [], adverts: [car("active")] },
+    { notifications: [], adverts: [car("declined")] },
+    { notifications: [approval(8)], adverts: [car("declined")] },
+  ]);
+  assert.deepEqual(ids, [
+    "jiji:ad_status:99:1",
+    "jiji:ad_status:99:2",
+    "jiji:notification:8",
+  ]);
+});
+
+test("a rejection clears a stale approval notification so a later re-approval alerts", () => {
+  const { ids } = polls([
+    { notifications: [], adverts: [car("on_review")] },
+    { notifications: [approval(8)], adverts: [car("on_review")] },
+    { notifications: [approval(8)], adverts: [car("declined")] },
+    { notifications: [approval(8)], adverts: [car("active")] },
+  ]);
+  assert.deepEqual(ids, [
+    "jiji:notification:8",
+    "jiji:ad_status:99:1",
+    "jiji:ad_status:99:2",
+  ]);
+});
+
+test("a dropped my_adverts repeat does not hide a same-poll rejection notification", () => {
+  const { ids } = polls([
+    { notifications: [], adverts: [car("on_review")] },
+    { notifications: [approval(8)], adverts: [car("on_review")] },
+    { notifications: [approval(8), decline(9)], adverts: [car("active")] },
+  ]);
+  assert.deepEqual(ids, ["jiji:notification:8", "jiji:notification:9"]);
+});
+
 test("ad status pairing expires: known outcomes after 48h, unknown after 6h", () => {
   const later = (to, gap) => {
     const { state } = polls([
