@@ -37,6 +37,8 @@ export class ApprovalPlans {
       operation: p.operation,
       parameters: p.parameters,
       purpose: p.purpose,
+      preview: p.preview,
+      payload_hash: p.payload_hash,
     };
   }
   get(id) {

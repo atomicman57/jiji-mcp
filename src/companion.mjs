@@ -9,6 +9,8 @@ import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { JijiBrowser } from "./browser-driver.mjs";
 import { ApprovalPlans } from "./plans.mjs";
+import { confirmAdvert, prepareAdvertPlan } from "./advert-confirm.mjs";
+import { photoRoots, photoSources, sweepDownloads } from "./advert-photos.mjs";
 import { prepareMessageAction } from "./message-actions.mjs";
 import {
   createRelease,
@@ -44,6 +46,7 @@ const bindHost = loopbackBindHost(process.env.JIJI_BIND_HOST);
 const origin = `http://${bindHost}:${port}`;
 const settings = readSendSettings(process.env, config);
 const browser = new JijiBrowser(path.join(runtime, "browser-profile"));
+browser.photoOptions = { roots: photoRoots(process.env, config) };
 const plans = new ApprovalPlans();
 const sendLog = await openSendLog(path.join(runtime, "send-log.jsonl"));
 // The local Approve button, auto-approve, and jiji_send_prepared all use this.
@@ -52,7 +55,7 @@ const dispatchPlan = (p) =>
     p.type === "jiji_message"
       ? browser.send(p)
       : p.type === "jiji_advert"
-        ? browser.executeAdvert(p.parameters)
+        ? browser.executeAdvert(p.parameters, p.payload_hash)
         : browser.executeAction(p.operation, p.parameters),
   );
 const release = createRelease({
@@ -119,17 +122,16 @@ async function action(m) {
     );
   }
   if (m.action === "prepare_advert") {
-    const p = await browser.run(() => browser.prepareAdvert(m.parameters));
-    return publicPlan(
-      plans.prepare({
-        type: "jiji_advert",
-        operation: p.operation,
-        parameters: p.parameters,
-        title: p.title,
-        purpose: p.notice,
-      }),
-    );
+    await sweepDownloads();
+    const parameters = {
+      ...m.parameters,
+      photos: photoSources(m.parameters?.photos),
+    };
+    const p = await browser.run(() => browser.prepareAdvert(parameters));
+    return publicPlan(prepareAdvertPlan(plans, p));
   }
+  if (m.action === "confirm_advert")
+    return publicPlan(await confirmAdvert(plans, dispatchPlan, m));
   if (m.action === "resolve_listing_target")
     return browser.run(() => browser.resolveListingTarget(m.listing_url));
   if (["prepare_message", "prepare_conversation_message"].includes(m.action)) {
@@ -335,7 +337,7 @@ const web = http.createServer(async (req, res) => {
       if (p.type !== "jiji_message")
         return html(
           res,
-          `<span class="eyebrow">REVIEW EXACT CHANGES</span><h1>${escape(p.title)}</h1><p>${escape(p.purpose)}</p><pre>${escape(JSON.stringify(p.parameters, null, 2))}</pre><p>This approval applies these changes once on your Jiji account. Review public posts, reports, and deletions carefully. Payments and credential changes are completed directly on Jiji.</p><form action="/api/approve/${escape(p.id)}" method="post"><input type="hidden" name="csrf" value="${csrf}"><button ${p.state !== "pending" ? "disabled" : ""}>Approve these changes on Jiji</button></form><p id="result" role="status">Status: ${escape(p.state)}</p>`,
+          `<span class="eyebrow">REVIEW EXACT CHANGES</span><h1>${escape(p.title)}</h1><p>${escape(p.purpose)}</p><pre>${escape(JSON.stringify(p.preview ?? p.parameters, null, 2))}</pre><p>This approval applies these changes once on your Jiji account. Review public posts, reports, and deletions carefully. Payments and credential changes are completed directly on Jiji.</p><form action="/api/approve/${escape(p.id)}" method="post"><input type="hidden" name="csrf" value="${csrf}"><button ${p.state !== "pending" ? "disabled" : ""}>Approve these changes on Jiji</button></form><p id="result" role="status">Status: ${escape(p.state)}</p>`,
         );
       return html(
         res,

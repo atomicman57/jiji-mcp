@@ -9,6 +9,39 @@ import {
   workflows,
   validateUserData,
 } from "./catalog.mjs";
+import {
+  assertFreeOnly,
+  buildAdvertSubmission,
+  categoryPathForId,
+  categoryTree,
+  resolveCategoryPath,
+} from "./advert-form.mjs";
+import {
+  photoRoots,
+  readPhoto,
+  removeDownloaded,
+  resolvePhotos,
+} from "./advert-photos.mjs";
+
+// The photo upload route is taken from Jiji's own advert form params, never
+// invented. It must be a same-origin /api_web/v1/ path.
+export function photoUploadPath(params = {}) {
+  for (const [key, value] of Object.entries(params)) {
+    if (!/upload/i.test(key) || !/image|photo|media/i.test(key)) continue;
+    if (typeof value !== "string") continue;
+    const u = new URL(value, "https://jiji.ng");
+    if (
+      u.origin === "https://jiji.ng" &&
+      u.pathname.startsWith("/api_web/v1/") &&
+      !u.username &&
+      !u.password
+    )
+      return u.pathname + u.search;
+  }
+  throw new Error(
+    "Jiji's advert form did not expose a photo upload route. Nothing was prepared; add photos with jiji_open_workflow post_ad.",
+  );
+}
 
 export class JijiBrowser {
   constructor(profile) {
@@ -18,6 +51,7 @@ export class JijiBrowser {
     this.queue = Promise.resolve();
     this.lastRequest = 0;
     this.conversations = new Map();
+    this.photoOptions = { roots: photoRoots() };
   }
   run(fn) {
     const task = this.queue.then(fn);
@@ -841,7 +875,9 @@ export class JijiBrowser {
       { name, title: item.title, mode: item.mode },
     );
   }
-  async prepareAdvert(parameters) {
+  // Reads Jiji's live create/edit and category forms and builds the exact
+  // submission plus a preview and payload hash. Sends nothing.
+  async prepareAdvert(parameters, photoOptions = this.photoOptions) {
     validateUserData(parameters.fields);
     const editing = parameters.editing ?? Boolean(parameters.advert_id);
     const base = await this.readResource(
@@ -866,48 +902,153 @@ export class JijiBrowser {
       url.search
     )
       throw new Error("Jiji advert submission route changed.");
+    let categoryId = parameters.category_id;
+    const tree = categoryTree(base.body);
+    if (!categoryId) {
+      if (!tree)
+        throw new Error(
+          "Jiji's form did not include a category list. Pass category_id.",
+        );
+      categoryId = resolveCategoryPath(tree, parameters.category_path);
+    }
     const category = await this.readResource("advert_category_fields", {
       advert_id: id,
-      category_id: parameters.category_id,
+      category_id: categoryId,
       title: String(parameters.fields.title || "").slice(0, 200),
     });
     if (category.status !== 200 || !Array.isArray(category.body?.fields))
       throw new Error("Could not load the current category form.");
-    const names = new Set(["title", "category_id", "region_id"]);
-    const visit = (fields) => {
-      for (const f of fields || []) {
-        if (f.name) names.add(f.name);
-        if (Array.isArray(f.fields)) visit(f.fields);
-      }
+    const photos = await resolvePhotos(parameters.photos, photoOptions);
+    const resolved = {
+      ...parameters,
+      category_id: categoryId,
+      advert_id: id,
+      editing,
+      ...(photos ? { photos } : {}),
     };
-    visit(category.body.fields);
-    visit(base.body.fields);
-    for (const key of Object.keys(parameters.fields))
-      if (!names.has(key))
-        throw new Error(
-          "Unknown category field: " +
-            key +
-            ". Read the current advert form first.",
-        );
-    const body = {
-      ...parameters.fields,
-      category_id: parameters.category_id,
-      region_id: parameters.region_id,
-    };
+    const built = buildAdvertSubmission({
+      base: base.body,
+      category: category.body,
+      parameters: resolved,
+      advertId: id,
+      editing,
+      photos,
+      categoryNames: tree ? categoryPathForId(tree, categoryId) : null,
+    });
     return {
       operation: "submit_advert",
-      parameters: { ...parameters, advert_id: id, editing },
+      parameters: resolved,
       title: editing
         ? "Edit advert and submit changes"
         : "Create advert and submit for Jiji moderation",
-      request: { path: url.pathname, method: editing ? "PUT" : "POST", body },
+      request: built.request,
+      preview: built.preview,
+      payload_hash: built.payload_hash,
+      photo_field: built.photoField,
+      form_fields: [...category.body.fields, ...(base.body.fields || [])],
+      upload_path: photos?.some((p) => p.sha256)
+        ? photoUploadPath(base.body.params)
+        : undefined,
       notice:
-        "Upload photos directly in Jiji first. Approval submits the advert; validation/moderation and posting limits still apply. No paid package is selected.",
+        "Preview only; nothing was sent. Confirming uploads the listed new photos and submits the advert once. Promotion is always No promo (free); any pre-selected promo or free trial was switched off. Validation/moderation and posting limits still apply.",
     };
   }
-  async executeAdvert(parameters) {
-    const current = await this.prepareAdvert(parameters);
-    const r = await this.catalogRequest(current.request);
+  // Uploads one photo through the signed-in page (same-origin cookies) and
+  // returns only Jiji's image id; URLs and signatures in the reply are dropped.
+  async uploadAdvertPhoto(uploadPath, photo) {
+    const { bytes, type } = await readPhoto(photo.path, {
+      ...this.photoOptions,
+      expectedSha: photo.sha256,
+      downloaded: photo.downloaded,
+    });
+    const page = await this.jijiPage();
+    const r = await page.evaluate(
+      async ({ uploadPath, data, type, name }) => {
+        try {
+          const form = new FormData();
+          const raw = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+          form.append("file", new Blob([raw], { type }), name);
+          const r = await fetch(uploadPath, {
+            method: "POST",
+            credentials: "include",
+            redirect: "error",
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            body: form,
+            signal: AbortSignal.timeout(60000),
+          });
+          if (!r.ok) return { status: r.status };
+          const body = await r.json();
+          const item = body?.image ?? body?.data ?? body?.result ?? body;
+          const id = item?.id ?? item?.image_id ?? body?.id ?? body?.image_id;
+          return { status: r.status, id: id == null ? null : String(id) };
+        } catch {
+          return { error: "Photo upload did not complete." };
+        }
+      },
+      {
+        uploadPath,
+        data: bytes.toString("base64"),
+        type,
+        name: photo.name || "photo." + type.split("/")[1],
+      },
+    );
+    if (r.error || !(r.status >= 200 && r.status < 300) || !r.id)
+      throw new Error(
+        r.error || `Jiji photo upload returned HTTP ${r.status ?? "?"}.`,
+      );
+    return r.id;
+  }
+  // Re-reads the live forms, refuses if the payload differs from the preview,
+  // uploads new photos in order, then submits once with No promo (free).
+  async executeAdvert(parameters, expectedHash) {
+    try {
+      return await this.submitAdvert(parameters, expectedHash);
+    } finally {
+      await removeDownloaded(parameters.photos);
+    }
+  }
+  async submitAdvert(parameters, expectedHash) {
+    let current;
+    try {
+      current = await this.prepareAdvert(parameters);
+    } catch (e) {
+      throw Object.assign(
+        new Error(e.message + " Nothing was sent; prepare a fresh preview."),
+        { nothingSent: true },
+      );
+    }
+    if (expectedHash !== undefined && current.payload_hash !== expectedHash)
+      throw Object.assign(
+        new Error(
+          "The advert payload or Jiji's form changed since the preview. Nothing was sent; prepare a fresh preview.",
+        ),
+        { nothingSent: true },
+      );
+    const body = { ...current.request.body };
+    assertFreeOnly(body, current.form_fields);
+    // Without a photo list (edit), the body already resends the current ids.
+    if (current.photo_field && current.parameters.photos) {
+      const photos = current.parameters.photos;
+      const ids = [];
+      try {
+        for (const p of photos)
+          ids.push(
+            p.existing_id !== undefined
+              ? p.existing_id
+              : await this.uploadAdvertPhoto(current.upload_path, p),
+          );
+      } catch (e) {
+        throw Object.assign(
+          new Error(
+            e.message +
+              " The advert was not submitted; photos uploaded so far are not attached to it.",
+          ),
+          { nothingSent: true },
+        );
+      }
+      body[current.photo_field] = ids;
+    }
+    const r = await this.catalogRequest({ ...current.request, body });
     if (
       r.error ||
       r.status !== 200 ||
@@ -921,6 +1062,9 @@ export class JijiBrowser {
       );
     return {
       submitted: true,
+      action: current.preview.action,
+      advert_id: current.parameters.advert_id,
+      promo: "free",
       result: r.body,
       message:
         "Jiji returned an advert submission response. Validation and moderation may still apply.",

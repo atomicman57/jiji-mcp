@@ -283,6 +283,7 @@ export class JijiBridge {
             "inspect_workflow",
             "prepare_action",
             "prepare_advert",
+            "confirm_advert",
           ].includes(m.action) &&
           !accountAccess
         )
@@ -307,6 +308,7 @@ export class JijiBridge {
             "inspect_workflow",
             "prepare_action",
             "prepare_advert",
+            "confirm_advert",
             "fetch",
             "inbox",
             "conversation",
