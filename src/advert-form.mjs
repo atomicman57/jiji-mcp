@@ -22,7 +22,8 @@ const PROMO_OPTION =
   /\b(top|boost|vip|premium|diamond)\b.*\b\d+\s*(days?|weeks?|months?)\b|\bfree trial\b/i;
 // Only an explicit "no promotion" choice counts as free; "Basic"/"Standard"
 // tiers are not assumed to be free.
-const FREE_OPTION = /^(no\s*promo(tion)?|free|none|no|without promo(tion)?)$/i;
+const FREE_OPTION =
+  /^(no\s*promo(tion)?|free|none|no|((post|publish) )?without promo(tion)?)$/i;
 const PAID_OPTION = /trial|day|week|month|top|boost|vip|premium|diamond|gold/i;
 const optionCost = (o) =>
   o && typeof o === "object"

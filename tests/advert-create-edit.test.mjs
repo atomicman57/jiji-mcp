@@ -319,6 +319,24 @@ test("photo URL download checks host, type and size", async () => {
     }),
     /larger than 10 MB/,
   );
+  // One hard deadline covers the whole download, not just idle time.
+  await assert.rejects(
+    downloadPhoto("https://cdn.example.com/slow.jpg", {
+      deadlineMs: 50,
+      get: async () => ({
+        status: 200,
+        headers: { get: () => null },
+        body: (async function* () {
+          for (;;) {
+            yield Buffer.from([1]);
+            await new Promise((r) => setTimeout(r, 20));
+          }
+        })(),
+      }),
+    }),
+    /took too long/,
+  );
+  assert.equal(isPublicAddress("::7f00:1"), false);
   // Redirects to a private host are refused.
   await assert.rejects(
     downloadPhoto("https://cdn.example.com/a.jpg", {

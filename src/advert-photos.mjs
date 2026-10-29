@@ -88,7 +88,7 @@ for (const [a, p] of [
 ])
   blocked4.addSubnet(a, p, "ipv4");
 for (const [a, p] of [
-  ["::", 127],
+  ["::", 96],
   ["::ffff:0:0", 96],
   ["64:ff9b::", 96],
   ["64:ff9b:1::", 48],
@@ -144,11 +144,11 @@ export function publicLookup(lookup = dns.lookup) {
 }
 
 // Minimal https GET pinned to publicLookup. Returns a fetch-like shape.
-function guardedGet(url, { lookup } = {}) {
+function guardedGet(url, { lookup, signal } = {}) {
   return new Promise((resolve, reject) => {
     const req = https.get(
       url,
-      { lookup: publicLookup(lookup), timeout: 20000 },
+      { lookup: publicLookup(lookup), timeout: 20000, signal },
       (res) =>
         resolve({
           status: res.statusCode,
@@ -170,10 +170,11 @@ function guardedGet(url, { lookup } = {}) {
   });
 }
 
-async function readCapped(body) {
+async function readCapped(body, signal) {
   const chunks = [];
   let size = 0;
   for await (const chunk of body) {
+    if (signal?.aborted) throw new Error("Photo download took too long.");
     size += chunk.length;
     if (size > MAX_PHOTO_BYTES)
       throw new Error("Photo at URL is larger than 10 MB.");
@@ -183,12 +184,43 @@ async function readCapped(body) {
 }
 
 // `get(url)` may be injected in tests; it must return { status, headers.get, body }.
-export async function downloadPhoto(url, { get, lookup, tmpDir } = {}) {
-  const fetchOnce = get || ((u) => guardedGet(u, { lookup }));
+// The whole download (all redirects and the body) has one hard deadline, so a
+// slow host cannot hold the browser queue that prepare runs in.
+export async function downloadPhoto(
+  url,
+  { get, lookup, tmpDir, deadlineMs = 30000 } = {},
+) {
+  const controller = new AbortController();
+  let active;
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      active?.cancel?.();
+      reject(new Error("Photo download took too long."));
+    }, deadlineMs);
+  });
+  try {
+    return await Promise.race([
+      fetchPhoto(url, {
+        get:
+          get || ((u) => guardedGet(u, { lookup, signal: controller.signal })),
+        tmpDir,
+        track: (r) => (active = r),
+        signal: controller.signal,
+      }),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchPhoto(url, { get, tmpDir, track, signal }) {
   let current = assertPublicUrl(url);
   let r;
   for (let hop = 0; ; hop++) {
-    r = await fetchOnce(current.href);
+    r = track(await get(current.href));
     if (r.status < 300 || r.status >= 400) break;
     r.cancel?.();
     if (hop >= 3) throw new Error("Photo URL redirected too many times.");
@@ -204,7 +236,7 @@ export async function downloadPhoto(url, { get, lookup, tmpDir } = {}) {
     r.cancel?.();
     throw new Error("Photo at URL is larger than 10 MB.");
   }
-  const bytes = await readCapped(r.body || []);
+  const bytes = await readCapped(r.body || [], signal);
   const type = checkImage(bytes, displayUrl(url));
   const dir = await fs.mkdtemp(path.join(tmpDir || os.tmpdir(), TEMP_PREFIX));
   const file = path.join(dir, randomBytes(8).toString("hex") + "." + EXT[type]);
